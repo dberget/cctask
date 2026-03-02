@@ -51,7 +51,8 @@ func SpawnStreamResumeCmd(p *tea.Program, projectRoot string, procID string, ses
 }
 
 func runStream(p *tea.Program, projectRoot string, procID string, prompt string, sessionID string, permissionMode string) tea.Msg {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
 
 	var allText strings.Builder
 	var finalSessionID string
@@ -73,36 +74,43 @@ func runStream(p *tea.Program, projectRoot string, procID string, prompt string,
 			return fmt.Errorf("query: %w", err)
 		}
 
-		for msg := range client.ReceiveMessages(ctx) {
-			events := convertMessageToEvents(msg)
-			for _, ev := range events {
-				if ev.Kind == model.EventText {
-					allText.WriteString(ev.Text)
+		msgChan := client.ReceiveMessages(ctx)
+		for {
+			select {
+			case msg, ok := <-msgChan:
+				if !ok {
+					return nil // channel closed
 				}
-				p.Send(StreamEventMsg{
-					ProcessID: procID,
-					Event:     ev,
-					SessionID: finalSessionID,
-				})
-			}
+				events := convertMessageToEvents(msg)
+				for _, ev := range events {
+					if ev.Kind == model.EventText {
+						allText.WriteString(ev.Text)
+					}
+					p.Send(StreamEventMsg{
+						ProcessID: procID,
+						Event:     ev,
+						SessionID: finalSessionID,
+					})
+				}
 
-			// Extract session info from ResultMessage.
-			// ResultMessage is the terminal message for a turn — break after
-			// processing it. The SDK runs Claude in interactive streaming mode
-			// (--input-format stream-json), so the subprocess stays alive after
-			// sending the result. Without breaking, the range loop blocks forever
-			// waiting for the channel to close.
-			if result, ok := msg.(*claudecode.ResultMessage); ok {
-				finalSessionID = result.SessionID
-				turnCount = result.NumTurns
-				if result.TotalCostUSD != nil {
-					costUSD = *result.TotalCostUSD
+				// Extract session info from ResultMessage.
+				// ResultMessage is the terminal message for a turn — break after
+				// processing it. The SDK runs Claude in interactive streaming mode
+				// (--input-format stream-json), so the subprocess stays alive after
+				// sending the result. Without breaking, the loop blocks forever
+				// waiting for the channel to close.
+				if result, ok := msg.(*claudecode.ResultMessage); ok {
+					finalSessionID = result.SessionID
+					turnCount = result.NumTurns
+					if result.TotalCostUSD != nil {
+						costUSD = *result.TotalCostUSD
+					}
+					return nil
 				}
-				break
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		}
-
-		return nil
 	}, opts...)
 
 	return StreamDoneMsg{
