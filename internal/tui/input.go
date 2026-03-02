@@ -46,6 +46,9 @@ func (m TextInputModel) Update(msg tea.KeyMsg) (TextInputModel, tea.Cmd) {
 		if m.Cursor < len(m.Value) {
 			m.Cursor++
 		}
+	case msg.Type == tea.KeySpace:
+		m.Value = m.Value[:m.Cursor] + " " + m.Value[m.Cursor:]
+		m.Cursor++
 	case msg.Type == tea.KeyRunes:
 		ch := string(msg.Runes)
 		m.Value = m.Value[:m.Cursor] + ch + m.Value[m.Cursor:]

@@ -44,7 +44,7 @@ func renderTaskDetail(task *model.Task, projectRoot string, width int) string {
 	if task.Description != "" {
 		lines = append(lines, "")
 		sepWidth := min(width-2, 50)
-		lines = append(lines, styleGray.Render(padRight("── Description ", sepWidth)+"─"))
+		lines = append(lines, sectionHeader("Description", sepWidth))
 		lines = append(lines, "")
 		lines = append(lines, wrapText(task.Description, width-2))
 	}
@@ -54,7 +54,7 @@ func renderTaskDetail(task *model.Task, projectRoot string, width int) string {
 		if plan != "" {
 			lines = append(lines, "")
 			sepWidth := min(width-2, 50)
-			lines = append(lines, styleGray.Render(padRight("── Plan (preview) ", sepWidth)+"─"))
+			lines = append(lines, sectionHeader("Plan (preview)", sepWidth))
 			lines = append(lines, "")
 			lines = append(lines, truncateLines(wrapText(plan, width-2), 15))
 		}
@@ -69,9 +69,21 @@ func renderGroupDetail(group *model.Group, s *model.TaskStore, projectRoot strin
 		width = maxDetailWidth
 	}
 	tasks := store.GetTasksForGroup(s, group.ID)
+	children := store.GetChildGroups(s, group.ID)
 	hasPlan := group.PlanFile != "" && store.PlanExists(projectRoot, group.PlanFile)
 
 	var lines []string
+
+	// Show breadcrumb path if this is a subgroup
+	if group.ParentGroup != "" {
+		path := store.GetGroupPath(s, group.ID)
+		var names []string
+		for _, g := range path {
+			names = append(names, g.Name)
+		}
+		lines = append(lines, styleGray.Render(strings.Join(names, " > ")))
+	}
+
 	lines = append(lines, styleCyanBold.Render(truncate(group.Name, width-2)))
 
 	if group.Description != "" {
@@ -80,12 +92,32 @@ func renderGroupDetail(group *model.Group, s *model.TaskStore, projectRoot strin
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, styleGray.Render(padRight("Tasks:", 10))+fmt.Sprintf("%d", len(tasks)))
-	lines = append(lines, styleGray.Render(padRight("Plan:", 10))+planStatus(hasPlan))
+	if group.ParentGroup != "" {
+		if parent := store.FindGroup(s, group.ParentGroup); parent != nil {
+			lines = append(lines, styleGray.Render(padRight("Parent:", 12))+parent.Name)
+		}
+	}
+	lines = append(lines, styleGray.Render(padRight("Tasks:", 12))+fmt.Sprintf("%d", len(tasks)))
+	if len(children) > 0 {
+		lines = append(lines, styleGray.Render(padRight("Subgroups:", 12))+fmt.Sprintf("%d", len(children)))
+	}
+	lines = append(lines, styleGray.Render(padRight("Plan:", 12))+planStatus(hasPlan))
+
+	// Show subgroups section
+	if len(children) > 0 {
+		lines = append(lines, "")
+		sepWidth := min(width-2, 50)
+		lines = append(lines, sectionHeader("Subgroups", sepWidth))
+		lines = append(lines, "")
+		for _, child := range children {
+			childTasks := store.GetTasksForGroup(s, child.ID)
+			lines = append(lines, styleBold.Render(child.Name)+styleGray.Render(fmt.Sprintf("  (%d tasks)", len(childTasks))))
+		}
+	}
 
 	lines = append(lines, "")
 	sepWidth := min(width-2, 50)
-	lines = append(lines, styleGray.Render(padRight("── Tasks ", sepWidth)+"─"))
+	lines = append(lines, sectionHeader("Tasks", sepWidth))
 	lines = append(lines, "")
 
 	if len(tasks) == 0 {

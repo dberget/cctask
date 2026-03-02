@@ -19,7 +19,7 @@ func horizontalLine(width int) string {
 	if width < 1 {
 		width = 40
 	}
-	return styleGray.Render(strings.Repeat("─", width))
+	return styleDim.Render(strings.Repeat("─", width))
 }
 
 func verticalSeparator(height int) string {
@@ -28,9 +28,21 @@ func verticalSeparator(height int) string {
 	}
 	var lines []string
 	for i := 0; i < height; i++ {
-		lines = append(lines, styleGray.Render("│"))
+		lines = append(lines, styleDim.Render("│"))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func sectionHeader(label string, width int) string {
+	prefix := "── "
+	suffix := " "
+	remaining := width - len(prefix) - len(label) - len(suffix)
+	if remaining < 0 {
+		remaining = 0
+	}
+	return styleDim.Render(prefix) +
+		styleGray.Bold(true).Render(label) +
+		styleDim.Render(suffix+strings.Repeat("─", remaining))
 }
 
 func truncate(s string, max int) string {
@@ -123,7 +135,7 @@ func renderScrollable(content string, offset int, viewHeight int) string {
 		if maxOffset > 0 {
 			pct = (offset * 100) / maxOffset
 		}
-		indicator = styleGray.Render(fmt.Sprintf(" [%d%%  j/k:scroll  d/u:page  g/G:top/bottom]", pct))
+		indicator = styleDim.Render(fmt.Sprintf(" [%d%%  j/k:scroll  d/u:page  g/G:top/bottom]", pct))
 	}
 
 	return strings.Join(visible, "\n") + "\n" + indicator

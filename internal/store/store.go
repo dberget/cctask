@@ -244,15 +244,24 @@ func DeleteTask(projectRoot string, id string) error {
 }
 
 func AddGroup(projectRoot string, name string, description string) (*model.Group, error) {
+	return AddGroupWithParent(projectRoot, name, description, "")
+}
+
+func AddGroupWithParent(projectRoot string, name string, description string, parentGroup string) (*model.Group, error) {
 	s, err := LoadStore(projectRoot)
 	if err != nil {
 		return nil, err
 	}
 	id := Slugify(name)
+	// If parent is set and a sibling with same slug exists, disambiguate
+	if parentGroup != "" && FindGroup(s, id) != nil {
+		id = Slugify(parentGroup + "-" + name)
+	}
 	group := model.Group{
 		ID:          id,
 		Name:        name,
 		Description: description,
+		ParentGroup: parentGroup,
 		Created:     model.Now(),
 	}
 	s.Groups = append(s.Groups, group)
@@ -271,17 +280,36 @@ func DeleteGroup(projectRoot string, id string) error {
 	if idx == -1 {
 		return fmt.Errorf("group %s not found", id)
 	}
+
+	// Collect all descendant group IDs (recursive)
+	allIDs := getAllDescendantGroupIDs(s, id)
+	allIDs = append(allIDs, id)
+
+	// Unassign tasks from all deleted groups
+	deleteSet := make(map[string]bool, len(allIDs))
+	for _, did := range allIDs {
+		deleteSet[did] = true
+	}
 	for i := range s.Tasks {
-		if s.Tasks[i].Group == id {
+		if deleteSet[s.Tasks[i].Group] {
 			s.Tasks[i].Group = ""
 		}
 	}
-	group := s.Groups[idx]
-	if group.PlanFile != "" {
-		pf := filepath.Join(PlansDir(projectRoot), group.PlanFile)
-		os.Remove(pf)
+
+	// Remove plan files and groups
+	var remaining []model.Group
+	for _, g := range s.Groups {
+		if deleteSet[g.ID] {
+			if g.PlanFile != "" {
+				pf := filepath.Join(PlansDir(projectRoot), g.PlanFile)
+				os.Remove(pf)
+			}
+			continue
+		}
+		remaining = append(remaining, g)
 	}
-	s.Groups = append(s.Groups[:idx], s.Groups[idx+1:]...)
+	s.Groups = remaining
+
 	return SaveStore(projectRoot, s)
 }
 
@@ -321,6 +349,49 @@ func FindGroup(s *model.TaskStore, id string) *model.Group {
 	return &s.Groups[idx]
 }
 
+// GetChildGroups returns direct child groups of the given parent.
+func GetChildGroups(s *model.TaskStore, parentID string) []model.Group {
+	var children []model.Group
+	for _, g := range s.Groups {
+		if g.ParentGroup == parentID {
+			children = append(children, g)
+		}
+	}
+	return children
+}
+
+// getAllDescendantGroupIDs returns all nested group IDs recursively.
+func getAllDescendantGroupIDs(s *model.TaskStore, groupID string) []string {
+	var ids []string
+	for _, g := range s.Groups {
+		if g.ParentGroup == groupID {
+			ids = append(ids, g.ID)
+			ids = append(ids, getAllDescendantGroupIDs(s, g.ID)...)
+		}
+	}
+	return ids
+}
+
+// GetAllDescendantGroupIDs returns all nested group IDs recursively (exported).
+func GetAllDescendantGroupIDs(s *model.TaskStore, groupID string) []string {
+	return getAllDescendantGroupIDs(s, groupID)
+}
+
+// GetGroupPath returns the ancestor chain from root to the given group (inclusive).
+func GetGroupPath(s *model.TaskStore, groupID string) []model.Group {
+	var path []model.Group
+	current := groupID
+	for current != "" {
+		g := FindGroup(s, current)
+		if g == nil {
+			break
+		}
+		path = append([]model.Group{*g}, path...)
+		current = g.ParentGroup
+	}
+	return path
+}
+
 func BuildListItems(s *model.TaskStore, filter string, collapsed map[string]bool) []model.ListItem {
 	var items []model.ListItem
 	matchesFilter := func(t model.Task) bool {
@@ -344,18 +415,13 @@ func BuildListItems(s *model.TaskStore, filter string, collapsed map[string]bool
 		return items
 	}
 
+	// Build tree: start with top-level groups (no parent)
 	for gi := range s.Groups {
 		group := s.Groups[gi]
-		projectTasks := filterGroupTasks(s, group.ID, matchesFilter)
-		if filter == "" || len(projectTasks) > 0 {
-			items = append(items, model.ListItem{Kind: model.ListItemProject, Project: &group})
-			if !collapsed[group.ID] {
-				for ti := range projectTasks {
-					t := projectTasks[ti]
-					items = append(items, model.ListItem{Kind: model.ListItemTask, Task: &t})
-				}
-			}
+		if group.ParentGroup != "" {
+			continue // skip non-root groups, they'll be added recursively
 		}
+		items = appendGroupItems(items, s, group.ID, 0, filter, collapsed, matchesFilter)
 	}
 
 	// Unassigned tasks
@@ -367,6 +433,66 @@ func BuildListItems(s *model.TaskStore, filter string, collapsed map[string]bool
 	}
 
 	return items
+}
+
+// appendGroupItems recursively adds a group, its tasks, and child groups to the list.
+func appendGroupItems(items []model.ListItem, s *model.TaskStore, groupID string, depth int, filter string, collapsed map[string]bool, matchesFilter func(model.Task) bool) []model.ListItem {
+	g := FindGroup(s, groupID)
+	if g == nil {
+		return items
+	}
+
+	groupTasks := filterGroupTasks(s, groupID, matchesFilter)
+	children := GetChildGroups(s, groupID)
+
+	// Check if this group or any descendant has matching tasks
+	hasContent := len(groupTasks) > 0
+	if !hasContent {
+		for _, child := range children {
+			if groupSubtreeHasMatch(s, child.ID, matchesFilter) {
+				hasContent = true
+				break
+			}
+		}
+	}
+
+	if filter != "" && !hasContent {
+		return items
+	}
+
+	group := *g
+	items = append(items, model.ListItem{Kind: model.ListItemProject, Project: &group, Depth: depth})
+
+	if collapsed[groupID] {
+		return items
+	}
+
+	// Add child groups first (recursively)
+	for _, child := range children {
+		items = appendGroupItems(items, s, child.ID, depth+1, filter, collapsed, matchesFilter)
+	}
+
+	// Add direct tasks for this group
+	for ti := range groupTasks {
+		t := groupTasks[ti]
+		items = append(items, model.ListItem{Kind: model.ListItemTask, Task: &t, Depth: depth + 1})
+	}
+
+	return items
+}
+
+// groupSubtreeHasMatch returns true if a group or any descendant has matching tasks.
+func groupSubtreeHasMatch(s *model.TaskStore, groupID string, matchesFilter func(model.Task) bool) bool {
+	tasks := filterGroupTasks(s, groupID, matchesFilter)
+	if len(tasks) > 0 {
+		return true
+	}
+	for _, child := range GetChildGroups(s, groupID) {
+		if groupSubtreeHasMatch(s, child.ID, matchesFilter) {
+			return true
+		}
+	}
+	return false
 }
 
 func findTaskIndex(s *model.TaskStore, id string) int {

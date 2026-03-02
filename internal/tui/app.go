@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -30,10 +31,12 @@ const (
 	actionFilter
 	actionNewProject
 	actionNewProjectAssign // new project + assign task
+	actionNewSubgroup      // new subgroup under selected group
 	actionAssignGroup
 	actionCombineName
 	actionFollowUp
 	actionEditPlanContent
+	actionGroupPrompt
 )
 
 type Model struct {
@@ -60,10 +63,12 @@ type Model struct {
 	editor      EditorModel
 
 	// Action context
-	action        actionContext
-	actionTaskID  string // task ID for context-dependent actions
-	actionPlanFile string // plan file for editor actions
-	returnMode    model.ViewMode // mode to return to on cancel
+	action           actionContext
+	actionTaskID     string         // task ID for context-dependent actions
+	actionPlanFile   string         // plan file for editor actions
+	actionScopeGroup string         // group ID for group prompt actions ("" = unassigned)
+	actionParentID   string         // parent group ID for subgroup creation
+	returnMode       model.ViewMode // mode to return to on cancel
 
 	// Processes
 	processes     []model.ClaudeProcess
@@ -273,7 +278,7 @@ func (m Model) renderHeader(projectName string) string {
 	}
 	title := styleCyanBold.Render("cctask") + " " +
 		styleTitle.Render("~/"+projectName) +
-		styleGray.Render(fmt.Sprintf("  [%d task%s, %d project%s]",
+		styleGray.Render(fmt.Sprintf("  %d task%s · %d project%s",
 			len(m.store.Tasks), pluralize(len(m.store.Tasks)),
 			len(m.store.Groups), pluralize(len(m.store.Groups))))
 
@@ -284,7 +289,8 @@ func (m Model) renderHeader(projectName string) string {
 func (m Model) renderContent() string {
 	switch m.mode {
 	case model.ModeAddTask, model.ModeEditTask, model.ModeFilter,
-		model.ModeEditTags, model.ModeEditDescription, model.ModeTaskViewAsk:
+		model.ModeEditTags, model.ModeEditDescription, model.ModeTaskViewAsk,
+		model.ModeGroupPrompt:
 		return m.textInput.View()
 
 	case model.ModeTaskForm:
@@ -371,7 +377,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.mode {
 	case model.ModeAddTask, model.ModeEditTask, model.ModeFilter,
 		model.ModeEditTags, model.ModeEditDescription,
-		model.ModeTaskViewAsk, model.ModeCombineName:
+		model.ModeTaskViewAsk, model.ModeCombineName,
+		model.ModeGroupPrompt:
 		var cmd tea.Cmd
 		m.textInput, cmd = m.textInput.Update(msg)
 		return m, cmd
@@ -568,6 +575,10 @@ if key == "esc" && m.mode != model.ModeList {
 		return m.handleCombine()
 	}
 
+	if key == "c" && m.mode == model.ModeList && m.focusPanel == model.FocusMain {
+		return m.handleGroupPrompt()
+	}
+
 	return m, nil
 }
 
@@ -614,6 +625,13 @@ func (m Model) handleTextSubmit(value string) (tea.Model, tea.Cmd) {
 		m.action = actionNone
 		return m, flashCmd(fmt.Sprintf("Project \"%s\" created", value))
 
+	case actionNewSubgroup:
+		store.AddGroupWithParent(m.projectRoot, value, "", m.actionParentID)
+		m.reload()
+		m.mode = model.ModeList
+		m.action = actionNone
+		return m, flashCmd(fmt.Sprintf("Subgroup \"%s\" created", value))
+
 	case actionNewProjectAssign:
 		g, _ := store.AddGroup(m.projectRoot, value, "")
 		if g != nil {
@@ -629,6 +647,9 @@ func (m Model) handleTextSubmit(value string) (tea.Model, tea.Cmd) {
 
 	case actionFollowUp:
 		return m.executeFollowUp(m.actionTaskID, value)
+
+	case actionGroupPrompt:
+		return m.spawnGroupAction(m.actionScopeGroup, value)
 	}
 
 	m.mode = model.ModeList
@@ -640,6 +661,8 @@ func (m Model) handleTextCancel() (tea.Model, tea.Cmd) {
 	switch m.action {
 	case actionFollowUp:
 		m.mode = model.ModeTaskView
+	case actionGroupPrompt:
+		m.mode = model.ModeList
 	default:
 		m.mode = model.ModeList
 	}
@@ -781,7 +804,12 @@ func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 		m.confirmIsGroup = false
 		m.mode = model.ModeConfirmDelete
 	} else if g := m.selectedGroup(); g != nil {
-		m.confirmMsg = fmt.Sprintf("Delete project \"%s\"?", g.Name)
+		children := store.GetChildGroups(m.store, g.ID)
+		if len(children) > 0 {
+			m.confirmMsg = fmt.Sprintf("Delete project \"%s\" and %d subgroup%s?", g.Name, len(children), pluralize(len(children)))
+		} else {
+			m.confirmMsg = fmt.Sprintf("Delete project \"%s\"?", g.Name)
+		}
 		m.confirmGroupID = g.ID
 		m.confirmIsGroup = true
 		m.mode = model.ModeConfirmDelete
@@ -809,10 +837,7 @@ func (m Model) handleAssignGroup() (tea.Model, tea.Cmd) {
 			m.mode = model.ModeAddTask
 			return m, nil
 		}
-		var items []SelectItem
-		for _, g := range m.store.Groups {
-			items = append(items, SelectItem{Label: g.Name, Value: g.ID})
-		}
+		items := buildHierarchicalGroupSelect(m.store, "", 0)
 		items = append(items, SelectItem{Label: "+ New project", Value: "__new__"})
 		items = append(items, SelectItem{Label: "Remove from project", Value: "__remove__"})
 		m.action = actionAssignGroup
@@ -821,10 +846,33 @@ func (m Model) handleAssignGroup() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// No task selected — if group is selected, create subgroup under it
+	if g := m.selectedGroup(); g != nil {
+		m.actionParentID = g.ID
+		m.action = actionNewSubgroup
+		m.textInput = NewTextInput(fmt.Sprintf("New subgroup under \"%s\"", g.Name), "")
+		m.mode = model.ModeAddTask
+		return m, nil
+	}
+
 	m.action = actionNewProject
 	m.textInput = NewTextInput("New project name", "")
 	m.mode = model.ModeAddTask
 	return m, nil
+}
+
+// buildHierarchicalGroupSelect builds a flat list of SelectItems with indentation for tree display.
+func buildHierarchicalGroupSelect(s *model.TaskStore, parentID string, depth int) []SelectItem {
+	var items []SelectItem
+	for _, g := range s.Groups {
+		if g.ParentGroup != parentID {
+			continue
+		}
+		prefix := strings.Repeat("  ", depth)
+		items = append(items, SelectItem{Label: prefix + g.Name, Value: g.ID})
+		items = append(items, buildHierarchicalGroupSelect(s, g.ID, depth+1)...)
+	}
+	return items
 }
 
 func (m Model) handleRun() (tea.Model, tea.Cmd) {
@@ -890,6 +938,205 @@ func (m Model) handleCombine() (tea.Model, tea.Cmd) {
 	m.multiCheck = NewMultiCheck("Select tasks to combine plans:", items)
 	m.mode = model.ModeCombineSelect
 	return m, nil
+}
+
+// --- Group prompt ---
+
+func (m Model) handleGroupPrompt() (tea.Model, tea.Cmd) {
+	var scopeGroupID string
+	var scopeLabel string
+
+	if g := m.selectedGroup(); g != nil {
+		scopeGroupID = g.ID
+		scopeLabel = g.Name
+	} else if t := m.selectedTask(); t != nil {
+		if t.Group != "" {
+			scopeGroupID = t.Group
+			if g := store.FindGroup(m.store, t.Group); g != nil {
+				scopeLabel = g.Name
+			} else {
+				scopeLabel = t.Group
+			}
+		} else {
+			scopeGroupID = ""
+			scopeLabel = "Unassigned"
+		}
+	} else {
+		return m, nil
+	}
+
+	m.actionScopeGroup = scopeGroupID
+	m.action = actionGroupPrompt
+	m.textInput = NewTextInput(fmt.Sprintf("Prompt for %s", scopeLabel), "")
+	m.textInput.Placeholder = "e.g. fill out tags, regroup tasks, review descriptions..."
+	m.mode = model.ModeGroupPrompt
+	return m, nil
+}
+
+// groupActionResult is the JSON structure Claude returns from a group action prompt.
+type groupActionResult struct {
+	Tasks     []groupActionTask  `json:"tasks"`
+	NewGroups []groupActionGroup `json:"newGroups"`
+	Summary   string             `json:"summary"`
+}
+
+type groupActionTask struct {
+	ID          string   `json:"id"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Status      string   `json:"status"`
+	Tags        []string `json:"tags"`
+	Group       string   `json:"group"`
+}
+
+type groupActionGroup struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func (m Model) spawnGroupAction(scopeGroupID string, instruction string) (tea.Model, tea.Cmd) {
+	// Gather tasks in scope
+	var scopeTasks []model.Task
+	if scopeGroupID != "" {
+		scopeTasks = store.GetTasksForGroup(m.store, scopeGroupID)
+	} else {
+		for _, t := range m.store.Tasks {
+			if t.Group == "" {
+				scopeTasks = append(scopeTasks, t)
+			}
+		}
+	}
+	if len(scopeTasks) == 0 {
+		m.mode = model.ModeList
+		m.action = actionNone
+		return m, flashCmd("No tasks in scope")
+	}
+
+	scopeLabel := "Unassigned"
+	if scopeGroupID != "" {
+		if g := store.FindGroup(m.store, scopeGroupID); g != nil {
+			scopeLabel = g.Name
+		}
+	}
+
+	promptText := prompt.BuildGroupActionPrompt(scopeTasks, m.store.Groups, scopeLabel, instruction)
+
+	label := "Prompt: " + scopeLabel
+	if m.runningLabels[label] {
+		m.mode = model.ModeList
+		m.action = actionNone
+		return m, flashCmd("Already running...")
+	}
+	m.runningLabels[label] = true
+
+	procID := fmt.Sprintf("group-prompt-%d", time.Now().Unix())
+	logFile := filepath.Join(m.projectRoot, ".cctask", "logs", procID+".log")
+	proc := model.ClaudeProcess{
+		ID:      procID,
+		Label:   label,
+		Status:  model.ProcessRunning,
+		Output:  "Processing tasks...",
+		LogFile: logFile,
+	}
+	m.processes = append(m.processes, proc)
+
+	m.mode = model.ModeList
+	m.action = actionNone
+
+	projectRoot := m.projectRoot
+
+	var cmd tea.Cmd
+	if m.program != nil {
+		cmd = claude.SpawnPlanCmd(m.program, projectRoot, procID, label, promptText)
+		innerCmd := cmd
+		cmd = func() tea.Msg {
+			result := innerCmd()
+			if done, ok := result.(claude.ProcessDoneMsg); ok && done.Err == nil {
+				applyGroupActionResult(projectRoot, done.Output)
+			}
+			return result
+		}
+	} else {
+		cmd = func() tea.Msg {
+			output, logFile, err := runClaudePipe(projectRoot, procID, promptText)
+			if err != nil {
+				return claude.ProcessDoneMsg{ID: procID, LogFile: logFile, Err: err}
+			}
+			applyGroupActionResult(projectRoot, output)
+			return claude.ProcessDoneMsg{ID: procID, Output: output, LogFile: logFile}
+		}
+	}
+
+	return m, tea.Batch(cmd, flashCmd(fmt.Sprintf("Running prompt on %s...", scopeLabel)))
+}
+
+// extractJSON strips markdown code block fences from Claude's output.
+func extractJSON(output string) string {
+	output = strings.TrimSpace(output)
+	if strings.HasPrefix(output, "```") {
+		lines := strings.Split(output, "\n")
+		if len(lines) >= 2 {
+			lines = lines[1:]
+			if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "```" {
+				lines = lines[:len(lines)-1]
+			}
+		}
+		output = strings.Join(lines, "\n")
+	}
+	return strings.TrimSpace(output)
+}
+
+func applyGroupActionResult(projectRoot string, output string) {
+	cleaned := extractJSON(output)
+	var result groupActionResult
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+		return
+	}
+
+	s, err := store.LoadStore(projectRoot)
+	if err != nil {
+		return
+	}
+
+	// Create new groups first so task reassignments can reference them
+	for _, ng := range result.NewGroups {
+		if ng.Name == "" {
+			continue
+		}
+		id := store.Slugify(ng.Name)
+		// Skip if group already exists
+		if store.FindGroup(s, id) != nil {
+			continue
+		}
+		s.Groups = append(s.Groups, model.Group{
+			ID:          id,
+			Name:        ng.Name,
+			Description: ng.Description,
+			Created:     model.Now(),
+		})
+	}
+
+	// Apply task updates
+	for _, ut := range result.Tasks {
+		t := store.FindTask(s, ut.ID)
+		if t == nil {
+			continue
+		}
+		if ut.Title != "" {
+			t.Title = ut.Title
+		}
+		t.Description = ut.Description
+		if ut.Status != "" {
+			t.Status = model.TaskStatus(ut.Status)
+		}
+		if ut.Tags != nil {
+			t.Tags = ut.Tags
+		}
+		t.Group = ut.Group
+		t.Updated = model.Now()
+	}
+
+	store.SaveStore(projectRoot, s)
 }
 
 // --- Process management ---

@@ -37,6 +37,7 @@ type Group struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	ParentGroup string `json:"parentGroup,omitempty"`
 	PlanFile    string `json:"planFile,omitempty"`
 	Created     string `json:"created"`
 }

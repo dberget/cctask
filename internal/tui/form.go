@@ -96,6 +96,9 @@ func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
 		m.Cursors[f] = 0
 	case msg.Type == tea.KeyCtrlE:
 		m.Cursors[f] = len(val)
+	case msg.Type == tea.KeySpace:
+		m.Values[f] = val[:cursor] + " " + val[cursor:]
+		m.Cursors[f] = cursor + 1
 	case msg.Type == tea.KeyRunes:
 		ch := string(msg.Runes)
 		m.Values[f] = val[:cursor] + ch + val[cursor:]

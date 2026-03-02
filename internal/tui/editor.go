@@ -141,7 +141,9 @@ func (m EditorModel) updateInsert(msg tea.KeyMsg) (EditorModel, tea.Cmd) {
 	case key == "tab":
 		m.insertText("  ")
 	default:
-		if msg.Type == tea.KeyRunes {
+		if msg.Type == tea.KeySpace {
+			m.insertText(" ")
+		} else if msg.Type == tea.KeyRunes {
 			m.insertText(string(msg.Runes))
 		}
 	}

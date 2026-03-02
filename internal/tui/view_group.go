@@ -11,11 +11,23 @@ import (
 func renderGroupView(group *model.Group, s *model.TaskStore, projectRoot string) string {
 	width := maxDetailWidth
 	tasks := store.GetTasksForGroup(s, group.ID)
+	children := store.GetChildGroups(s, group.ID)
 	hasPlan := group.PlanFile != "" && store.PlanExists(projectRoot, group.PlanFile)
 
 	sepWidth := min(width-2, 50)
 	var lines []string
-	lines = append(lines, styleCyanBold.Render("Project: "+group.Name))
+
+	// Show breadcrumb path if subgroup
+	if group.ParentGroup != "" {
+		path := store.GetGroupPath(s, group.ID)
+		var names []string
+		for _, g := range path {
+			names = append(names, g.Name)
+		}
+		lines = append(lines, styleCyanBold.Render("Project: "+strings.Join(names, " > ")))
+	} else {
+		lines = append(lines, styleCyanBold.Render("Project: "+group.Name))
+	}
 	lines = append(lines, "")
 	lines = append(lines, horizontalLine(sepWidth))
 
@@ -27,9 +39,19 @@ func renderGroupView(group *model.Group, s *model.TaskStore, projectRoot string)
 	lines = append(lines, "")
 	lines = append(lines, styleGray.Render(padRight("Plan:", 10))+planStatus(hasPlan))
 
+	// Subgroups section
+	if len(children) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, sectionHeader(fmt.Sprintf("Subgroups (%d)", len(children)), 50))
+		lines = append(lines, "")
+		for _, child := range children {
+			childTasks := store.GetTasksForGroup(s, child.ID)
+			lines = append(lines, styleBold.Render(child.Name)+styleGray.Render(fmt.Sprintf("  (%d tasks)", len(childTasks))))
+		}
+	}
+
 	lines = append(lines, "")
-	lines = append(lines, styleBold.Render(fmt.Sprintf("Tasks (%d)", len(tasks))))
-	lines = append(lines, horizontalLine(40))
+	lines = append(lines, sectionHeader(fmt.Sprintf("Tasks (%d)", len(tasks)), 50))
 	lines = append(lines, "")
 
 	if len(tasks) == 0 {

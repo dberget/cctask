@@ -3,19 +3,24 @@ package tui
 import "github.com/charmbracelet/lipgloss"
 
 var (
-	colorPrimary   = lipgloss.Color("6")  // cyan
-	colorSecondary = lipgloss.Color("8")  // gray
-	colorAccent    = lipgloss.Color("3")  // yellow
-	colorSuccess   = lipgloss.Color("2")  // green
-	colorError     = lipgloss.Color("1")  // red
-	colorMagenta   = lipgloss.Color("5")  // magenta
-	colorWhite     = lipgloss.Color("15") // white
+	// ── Color Palette ──────────────────────────────────
+	colorPrimary   = lipgloss.Color("#818CF8") // indigo-400
+	colorSecondary = lipgloss.Color("#9CA3AF") // gray-400
+	colorAccent    = lipgloss.Color("#FBBF24") // amber-400
+	colorSuccess   = lipgloss.Color("#34D399") // emerald-400
+	colorError     = lipgloss.Color("#F87171") // red-400
+	colorMagenta   = lipgloss.Color("#C084FC") // purple-400
+	colorWhite     = lipgloss.Color("#E5E7EB") // gray-200
+	colorBright    = lipgloss.Color("#F9FAFB") // gray-50
+	colorDim       = lipgloss.Color("#4B5563") // gray-600
+	colorBorder    = lipgloss.Color("#374151") // gray-700
 
+	// ── Base Styles ────────────────────────────────────
 	styleBold = lipgloss.NewStyle().Bold(true)
 
 	styleTitle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(colorWhite)
+			Foreground(colorBright)
 
 	styleCyan = lipgloss.NewStyle().
 			Foreground(colorPrimary)
@@ -26,6 +31,9 @@ var (
 
 	styleGray = lipgloss.NewStyle().
 			Foreground(colorSecondary)
+
+	styleDim = lipgloss.NewStyle().
+			Foreground(colorDim)
 
 	styleYellow = lipgloss.NewStyle().
 			Foreground(colorAccent)
@@ -43,12 +51,12 @@ var (
 			Foreground(colorPrimary)
 
 	styleCursor = lipgloss.NewStyle().
-			Background(lipgloss.Color("15")).
-			Foreground(lipgloss.Color("0"))
+			Background(colorBright).
+			Foreground(lipgloss.Color("#111827"))
 
 	styleBorder = lipgloss.NewStyle().
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderForeground(colorSecondary)
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(colorBorder)
 )
 
 func statusIcon(status string) string {
@@ -60,7 +68,7 @@ func statusIcon(status string) string {
 	case "done":
 		return styleGreen.Render("✓")
 	default:
-		return "○"
+		return styleDim.Render("○")
 	}
 }
 
@@ -86,7 +94,7 @@ func processStatusSymbol(status string) string {
 	case "error":
 		return styleRed.Render("✗")
 	default:
-		return "○"
+		return styleDim.Render("○")
 	}
 }
 
@@ -107,5 +115,5 @@ func planStatus(hasPlan bool) string {
 	if hasPlan {
 		return styleGreen.Render("✓ saved")
 	}
-	return styleGray.Render("none")
+	return styleDim.Render("none")
 }

@@ -29,12 +29,14 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 	} else {
 		for i, item := range items {
 			isSelected := isFocused && i == selectedIndex
+			depthIndent := strings.Repeat("  ", item.Depth)
 
 			if item.Kind == model.ListItemProject {
 				if i > 0 {
 					lines = append(lines, "")
 				}
 				taskCount := len(store.GetTasksForGroup(s, item.Project.ID))
+				childCount := len(store.GetChildGroups(s, item.Project.ID))
 				isCollapsed := collapsed[item.Project.ID]
 				chevron := "▾"
 				if isCollapsed {
@@ -46,9 +48,17 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 					nameStyle = lipgloss.NewStyle().Bold(true).Foreground(colorPrimary)
 					chevronStyle = lipgloss.NewStyle().Foreground(colorPrimary)
 				}
-				line := chevronStyle.Render(chevron+" ") +
-					nameStyle.Render(truncate(item.Project.Name, 23)) +
-					styleGray.Render(fmt.Sprintf("  (%d)", taskCount))
+				maxName := 23 - item.Depth*2
+				if maxName < 8 {
+					maxName = 8
+				}
+				countStr := fmt.Sprintf("  (%d)", taskCount)
+				if childCount > 0 {
+					countStr = fmt.Sprintf("  (%d+%dsub)", taskCount, childCount)
+				}
+				line := depthIndent + chevronStyle.Render(chevron+" ") +
+					nameStyle.Render(truncate(item.Project.Name, maxName)) +
+					styleGray.Render(countStr)
 				lines = append(lines, line)
 				continue
 			}
@@ -69,9 +79,9 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 			var indent string
 			if hasProjects {
 				if isSelected {
-					indent = "  ▸ "
+					indent = depthIndent + "  ▸ "
 				} else {
-					indent = "    "
+					indent = depthIndent + "    "
 				}
 			} else {
 				if isSelected {
@@ -81,9 +91,9 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 				}
 			}
 
-			nameWidth := 20
-			if hasProjects {
-				nameWidth = 16
+			nameWidth := 20 - item.Depth*2
+			if nameWidth < 8 {
+				nameWidth = 8
 			}
 
 			nameColor := colorWhite

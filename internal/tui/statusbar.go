@@ -7,7 +7,7 @@ import (
 )
 
 func keyHint(key, label string) string {
-	return styleCyanBold.Render(key) + styleGray.Render(":"+label)
+	return styleCyanBold.Render(key) + " " + styleDim.Render(label)
 }
 
 func renderStatusBar(mode model.ViewMode, message string, cols int) string {
@@ -22,8 +22,9 @@ func renderStatusBar(mode model.ViewMode, message string, cols int) string {
 		hints = []string{
 			keyHint("a", "add"), keyHint("e", "edit"), keyHint("d", "delete"),
 			keyHint("g", "project"), keyHint("r", "run"), keyHint("p", "plan"),
-			keyHint("s", "status"), keyHint("/", "filter"), keyHint("v", "view"),
-			keyHint("m", "merge"), keyHint("Space", "collapse"), keyHint("Tab", "switch"),
+			keyHint("s", "status"), keyHint("c", "prompt"), keyHint("/", "filter"),
+			keyHint("v", "view"), keyHint("m", "merge"), keyHint("Space", "collapse"),
+			keyHint("Tab", "switch"),
 		}
 	case model.ModeDetail:
 		hints = []string{
@@ -62,7 +63,7 @@ func renderStatusBar(mode model.ViewMode, message string, cols int) string {
 			keyHint("c", "ask claude"), keyHint("s", "status"),
 			keyHint("Esc", "back"),
 		}
-	case model.ModeTaskViewAsk:
+	case model.ModeTaskViewAsk, model.ModeGroupPrompt:
 		hints = []string{
 			keyHint("Enter", "send"), keyHint("Esc", "cancel"),
 		}
