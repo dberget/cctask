@@ -78,6 +78,57 @@ func BuildGroupPrompt(projectRoot string, group *model.Group, s *model.TaskStore
 			}
 		}
 	}
+
+	// Task data file instructions
+	tasksPath := store.TasksPath(projectRoot)
+	plansDir := store.PlansDir(projectRoot)
+	parts = append(parts, "\n## Task Data Files")
+	parts = append(parts, fmt.Sprintf("You can manage tasks and groups by editing the data files directly."))
+	parts = append(parts, "")
+	parts = append(parts, fmt.Sprintf("### Task store: %s", tasksPath))
+	parts = append(parts, "JSON file with this schema:")
+	parts = append(parts, "```json")
+	parts = append(parts, `{`)
+	parts = append(parts, `  "tasks": [`)
+	parts = append(parts, `    {`)
+	parts = append(parts, `      "id": "t1",`)
+	parts = append(parts, `      "title": "Task title",`)
+	parts = append(parts, `      "description": "Details",`)
+	parts = append(parts, `      "status": "pending",`)
+	parts = append(parts, `      "tags": ["tag1"],`)
+	parts = append(parts, fmt.Sprintf(`      "group": "%s",`, group.ID))
+	parts = append(parts, `      "planFile": "t1-task-title.md",`)
+	parts = append(parts, `      "created": "2025-01-01T00:00:00Z",`)
+	parts = append(parts, `      "updated": "2025-01-01T00:00:00Z"`)
+	parts = append(parts, `    }`)
+	parts = append(parts, `  ],`)
+	parts = append(parts, `  "groups": [`)
+	parts = append(parts, `    {`)
+	parts = append(parts, `      "id": "group-slug",`)
+	parts = append(parts, `      "name": "Group Name",`)
+	parts = append(parts, `      "description": "Details",`)
+	parts = append(parts, `      "parentGroup": "",`)
+	parts = append(parts, `      "planFile": "group-slug.md",`)
+	parts = append(parts, `      "created": "2025-01-01T00:00:00Z"`)
+	parts = append(parts, `    }`)
+	parts = append(parts, `  ],`)
+	parts = append(parts, `  "combinedPlans": [],`)
+	parts = append(parts, `  "nextId": 2`)
+	parts = append(parts, `}`)
+	parts = append(parts, "```")
+	parts = append(parts, "")
+	parts = append(parts, "Rules:")
+	parts = append(parts, "- Task IDs use the format \"t<N>\" (e.g. t1, t2). Increment nextId when adding tasks.")
+	parts = append(parts, "- Valid status values: \"pending\", \"in-progress\", \"done\"")
+	parts = append(parts, "- Group IDs are lowercase hyphenated slugs of the group name (max 40 chars)")
+	parts = append(parts, "- Set the task \"group\" field to the group ID to assign it to a group")
+	parts = append(parts, "- Timestamps use RFC3339 format")
+	parts = append(parts, "")
+	parts = append(parts, fmt.Sprintf("### Plans directory: %s", plansDir))
+	parts = append(parts, "- Task plans: `<taskId>-<slugified-title>.md` (e.g. `t1-task-title.md`)")
+	parts = append(parts, "- Group plans: `<group-id>.md` (e.g. `my-group.md`)")
+	parts = append(parts, "- Set the task/group \"planFile\" field to the filename after creating a plan file")
+
 	return strings.Join(parts, "\n")
 }
 
@@ -227,6 +278,7 @@ type groupJSON struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	ParentGroup string `json:"parentGroup"`
 }
 
 func BuildGroupActionPrompt(tasks []model.Task, groups []model.Group, scopeLabel string, instruction string) string {
@@ -249,7 +301,7 @@ func BuildGroupActionPrompt(tasks []model.Task, groups []model.Group, scopeLabel
 
 	var gj []groupJSON
 	for _, g := range groups {
-		gj = append(gj, groupJSON{ID: g.ID, Name: g.Name, Description: g.Description})
+		gj = append(gj, groupJSON{ID: g.ID, Name: g.Name, Description: g.Description, ParentGroup: g.ParentGroup})
 	}
 	groupsData, _ := json.MarshalIndent(gj, "", "  ")
 
@@ -274,7 +326,10 @@ func BuildGroupActionPrompt(tasks []model.Task, groups []model.Group, scopeLabel
 	lines = append(lines, `    {"id": "t1", "title": "...", "description": "...", "status": "pending", "tags": ["..."], "group": "group-id"}`)
 	lines = append(lines, `  ],`)
 	lines = append(lines, `  "newGroups": [`)
-	lines = append(lines, `    {"name": "Group Name", "description": "..."}`)
+	lines = append(lines, `    {"name": "Group Name", "description": "...", "parentGroup": "parent-group-id-or-empty"}`)
+	lines = append(lines, `  ],`)
+	lines = append(lines, `  "updatedGroups": [`)
+	lines = append(lines, `    {"id": "existing-group-id", "parentGroup": "new-parent-id-or-empty"}`)
 	lines = append(lines, `  ],`)
 	lines = append(lines, `  "summary": "brief description of changes made"`)
 	lines = append(lines, `}`)
@@ -284,8 +339,11 @@ func BuildGroupActionPrompt(tasks []model.Task, groups []model.Group, scopeLabel
 	lines = append(lines, "- Each task must have ALL fields: id, title, description, status, tags, group")
 	lines = append(lines, "- Valid status values: \"pending\", \"in-progress\", \"done\"")
 	lines = append(lines, "- For group field, use the group ID (lowercase, hyphenated slug of the name)")
+	lines = append(lines, "- Groups support hierarchy via the parentGroup field (ID of the parent group, or empty string for top-level)")
 	lines = append(lines, "- If creating new groups, add them to newGroups and use their slugified name as the group ID in tasks")
+	lines = append(lines, "- To make an existing group a subgroup of another, add it to updatedGroups with the new parentGroup ID")
 	lines = append(lines, "- If no new groups are needed, use an empty array for newGroups")
+	lines = append(lines, "- If no group hierarchy changes are needed, use an empty array for updatedGroups")
 	lines = append(lines, "- Do not remove or add tasks — only modify existing ones")
 	return strings.Join(lines, "\n")
 }

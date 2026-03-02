@@ -19,3 +19,12 @@ func LoadConfig(projectRoot string) model.Config {
 	}
 	return c
 }
+
+func SaveConfig(projectRoot string, cfg model.Config) error {
+	fp := ConfigPath(projectRoot)
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(fp, data, 0o644)
+}

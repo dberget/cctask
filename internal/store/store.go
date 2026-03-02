@@ -415,6 +415,9 @@ func BuildListItems(s *model.TaskStore, filter string, collapsed map[string]bool
 		return items
 	}
 
+	// Add "All Tasks" virtual group at the top
+	items = append(items, model.ListItem{Kind: model.ListItemAllTasks})
+
 	// Build tree: start with top-level groups (no parent)
 	for gi := range s.Groups {
 		group := s.Groups[gi]

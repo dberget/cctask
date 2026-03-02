@@ -60,6 +60,7 @@ type TaskStore struct {
 type Config struct {
 	Model  string `json:"model,omitempty"`
 	Budget int    `json:"budget,omitempty"`
+	Theme  string `json:"theme,omitempty"`
 }
 
 type ProcessStatus string

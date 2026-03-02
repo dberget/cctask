@@ -89,12 +89,28 @@ type Model struct {
 	// Scroll offset for fullscreen views
 	scrollOffset int
 
+	// Scroll offset for list panel
+	listScrollOffset int
+
+	// Theme picker state
+	previousTheme string
+
+	// Vim gg state
+	pendingG bool
+
 	// Program reference for streaming processes
 	program *tea.Program
 }
 
 func NewModel(projectRoot string) Model {
 	s, _ := store.LoadStore(projectRoot)
+
+	// Load theme from config
+	cfg := store.LoadConfig(projectRoot)
+	if cfg.Theme != "" {
+		ApplyTheme(cfg.Theme)
+	}
+
 	m := Model{
 		projectRoot:     projectRoot,
 		store:           s,
@@ -187,6 +203,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SelectSubmitMsg:
 		return m.handleSelectSubmit(msg.Value)
 	case SelectCancelMsg:
+		// Restore previous theme if cancelling theme picker
+		if m.mode == model.ModeThemePicker && m.previousTheme != "" {
+			ApplyTheme(m.previousTheme)
+		}
 		m.mode = model.ModeList
 		m.action = actionNone
 		return m, nil
@@ -222,6 +242,21 @@ func (m Model) View() string {
 	statusBar := renderStatusBar(m.mode, m.message, m.width)
 	content := m.renderContent()
 
+	// Measure header and status bar to calculate available content height
+	headerLines := strings.Count(header, "\n") + 1
+	statusLines := strings.Count(statusBar, "\n") + 2 // +1 for PaddingBottom
+	maxContentLines := m.height - headerLines - statusLines
+	if maxContentLines < 5 {
+		maxContentLines = 5
+	}
+
+	// Clip content to fit available space
+	contentLines := strings.Split(content, "\n")
+	if len(contentLines) > maxContentLines {
+		contentLines = contentLines[:maxContentLines]
+		content = strings.Join(contentLines, "\n")
+	}
+
 	page := lipgloss.JoinVertical(lipgloss.Left,
 		header,
 		lipgloss.NewStyle().PaddingLeft(2).PaddingRight(2).Render(content),
@@ -253,6 +288,20 @@ func (m *Model) updateSelectedItem() {
 	} else {
 		m.selectedItem = nil
 	}
+	m.ensureListScrollVisible()
+}
+
+func (m *Model) ensureListScrollVisible() {
+	listHeight := m.height - 8
+	if listHeight <= 0 || len(m.listItems) == 0 {
+		return
+	}
+	selectedLine := listLineForIndex(m.store, m.listItems, m.listIndex)
+	if selectedLine < m.listScrollOffset+2 {
+		m.listScrollOffset = max(0, selectedLine-2)
+	} else if selectedLine >= m.listScrollOffset+listHeight-1 {
+		m.listScrollOffset = selectedLine - listHeight + 2
+	}
 }
 
 func (m *Model) selectedTask() *model.Task {
@@ -267,6 +316,10 @@ func (m *Model) selectedGroup() *model.Group {
 		return m.selectedItem.Project
 	}
 	return nil
+}
+
+func (m *Model) selectedAllTasks() bool {
+	return m.selectedItem != nil && m.selectedItem.Kind == model.ListItemAllTasks
 }
 
 // --- Rendering ---
@@ -296,7 +349,7 @@ func (m Model) renderContent() string {
 	case model.ModeTaskForm:
 		return m.form.View()
 
-	case model.ModeAddToGroup:
+	case model.ModeAddToGroup, model.ModeThemePicker:
 		return m.selectInput.View()
 
 	case model.ModeCombineSelect:
@@ -337,6 +390,9 @@ func (m Model) renderContent() string {
 		}
 		return ""
 
+	case model.ModeHelp:
+		return renderScrollable(renderHelp(), m.scrollOffset, m.height-8)
+
 	default:
 		return m.renderListView()
 	}
@@ -345,8 +401,9 @@ func (m Model) renderContent() string {
 func (m Model) renderListView() string {
 	hasProcesses := len(m.processes) > 0
 
+	listHeight := m.height - 8
 	listPanel := renderListPanel(m.store, m.projectRoot, m.listItems, m.listIndex,
-		m.focusPanel == model.FocusMain, m.height-8, m.collapsedGroups)
+		m.focusPanel == model.FocusMain, listHeight, m.collapsedGroups, m.listScrollOffset)
 
 	detailWidth := m.width - listPanelWidth - separatorWidth*2 - 4
 	if hasProcesses {
@@ -360,7 +417,7 @@ func (m Model) renderListView() string {
 	}
 
 	detailPanel := renderDetailPanel(m.store, m.projectRoot, m.selectedItem, detailWidth)
-	sep := lipgloss.NewStyle().PaddingLeft(2).PaddingRight(2).Render(verticalSeparator(m.height - 10))
+	sep := lipgloss.NewStyle().PaddingLeft(2).PaddingRight(2).Render(verticalSeparator(listHeight))
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, listPanel, sep, detailPanel)
 
 	if hasProcesses {
@@ -368,7 +425,12 @@ func (m Model) renderListView() string {
 		panels = lipgloss.JoinHorizontal(lipgloss.Top, panels, sep, processPanel)
 	}
 
-	return panels
+	// Clip to available height so the terminal doesn't scroll past the top
+	panelLines := strings.Split(panels, "\n")
+	if len(panelLines) > listHeight {
+		panelLines = panelLines[:listHeight]
+	}
+	return strings.Join(panelLines, "\n")
 }
 
 // --- Key handling ---
@@ -388,9 +450,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.form, cmd = m.form.Update(msg)
 		return m, cmd
 
-	case model.ModeAddToGroup:
+	case model.ModeAddToGroup, model.ModeThemePicker:
 		var cmd tea.Cmd
 		m.selectInput, cmd = m.selectInput.Update(msg)
+		// Live preview: apply theme as user navigates
+		if m.mode == model.ModeThemePicker && m.selectInput.Index < len(m.selectInput.Items) {
+			ApplyTheme(m.selectInput.Items[m.selectInput.Index].Value)
+		}
 		return m, cmd
 
 	case model.ModeCombineSelect:
@@ -412,7 +478,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) isFullscreenMode() bool {
 	switch m.mode {
-	case model.ModePlan, model.ModeTaskView, model.ModeGroupDetail, model.ModeProcessDetail:
+	case model.ModePlan, model.ModeTaskView, model.ModeGroupDetail, model.ModeProcessDetail, model.ModeHelp:
 		return true
 	}
 	return false
@@ -421,17 +487,32 @@ func (m Model) isFullscreenMode() bool {
 func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
-	if key == "ctrl+c" {
+	// Clear pending g on any non-g key
+	if key != "g" {
+		m.pendingG = false
+	}
+
+	if key == "ctrl+c" || (key == "q" && m.mode == model.ModeList) {
 		return m, tea.Quit
 	}
 
-if key == "esc" && m.mode != model.ModeList {
+	if key == "?" {
+		if m.mode == model.ModeHelp {
+			m.mode = model.ModeList
+		} else {
+			m.mode = model.ModeHelp
+			m.scrollOffset = 0
+		}
+		return m, nil
+	}
+
+	if key == "esc" && m.mode != model.ModeList {
 		m.mode = model.ModeList
 		m.scrollOffset = 0
 		return m, nil
 	}
 
-	// Scroll in fullscreen views
+	// Scroll in fullscreen views (including help)
 	if m.isFullscreenMode() {
 		halfPage := max(1, (m.height-8)/2)
 		switch key {
@@ -451,9 +532,19 @@ if key == "esc" && m.mode != model.ModeList {
 			m.scrollOffset = 999999 // clamped in renderScrollable
 			return m, nil
 		case "g":
-			m.scrollOffset = 0
+			if m.pendingG {
+				m.pendingG = false
+				m.scrollOffset = 0
+			} else {
+				m.pendingG = true
+			}
 			return m, nil
 		}
+	}
+
+	// Help mode only responds to scroll, ?, Esc, Ctrl+C (handled above)
+	if m.mode == model.ModeHelp {
+		return m, nil
 	}
 
 	if key == "k" || key == "up" {
@@ -579,6 +670,29 @@ if key == "esc" && m.mode != model.ModeList {
 		return m.handleGroupPrompt()
 	}
 
+	if key == "t" && m.mode == model.ModeList {
+		cfg := store.LoadConfig(m.projectRoot)
+		m.previousTheme = cfg.Theme
+		if m.previousTheme == "" {
+			m.previousTheme = "default"
+		}
+		var items []SelectItem
+		for _, name := range ThemeNames {
+			tc := Themes[name]
+			items = append(items, SelectItem{Label: tc.Name, Value: name})
+		}
+		m.selectInput = NewSelectInput("Theme", items)
+		// Set initial index to current theme
+		for i, name := range ThemeNames {
+			if name == m.previousTheme {
+				m.selectInput.Index = i
+				break
+			}
+		}
+		m.mode = model.ModeThemePicker
+		return m, nil
+	}
+
 	return m, nil
 }
 
@@ -613,6 +727,7 @@ func (m Model) handleTextSubmit(value string) (tea.Model, tea.Cmd) {
 	case actionFilter:
 		m.filter = value
 		m.listIndex = 0
+		m.listScrollOffset = 0
 		m.rebuildList()
 		m.mode = model.ModeList
 		m.action = actionNone
@@ -705,6 +820,16 @@ func (m Model) handleFormSubmit(data TaskFormData) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSelectSubmit(value string) (tea.Model, tea.Cmd) {
+	if m.mode == model.ModeThemePicker {
+		ApplyTheme(value)
+		cfg := store.LoadConfig(m.projectRoot)
+		cfg.Theme = value
+		store.SaveConfig(m.projectRoot, cfg)
+		m.mode = model.ModeList
+		tc := Themes[value]
+		return m, flashCmd("Theme: " + tc.Name)
+	}
+
 	switch value {
 	case "__new__":
 		m.action = actionNewProjectAssign
@@ -946,7 +1071,10 @@ func (m Model) handleGroupPrompt() (tea.Model, tea.Cmd) {
 	var scopeGroupID string
 	var scopeLabel string
 
-	if g := m.selectedGroup(); g != nil {
+	if m.selectedAllTasks() {
+		scopeGroupID = "__all__"
+		scopeLabel = "All Tasks"
+	} else if g := m.selectedGroup(); g != nil {
 		scopeGroupID = g.ID
 		scopeLabel = g.Name
 	} else if t := m.selectedTask(); t != nil {
@@ -975,9 +1103,10 @@ func (m Model) handleGroupPrompt() (tea.Model, tea.Cmd) {
 
 // groupActionResult is the JSON structure Claude returns from a group action prompt.
 type groupActionResult struct {
-	Tasks     []groupActionTask  `json:"tasks"`
-	NewGroups []groupActionGroup `json:"newGroups"`
-	Summary   string             `json:"summary"`
+	Tasks         []groupActionTask         `json:"tasks"`
+	NewGroups     []groupActionGroup        `json:"newGroups"`
+	UpdatedGroups []groupActionGroupUpdate  `json:"updatedGroups"`
+	Summary       string                    `json:"summary"`
 }
 
 type groupActionTask struct {
@@ -992,12 +1121,20 @@ type groupActionTask struct {
 type groupActionGroup struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	ParentGroup string `json:"parentGroup"`
+}
+
+type groupActionGroupUpdate struct {
+	ID          string `json:"id"`
+	ParentGroup string `json:"parentGroup"`
 }
 
 func (m Model) spawnGroupAction(scopeGroupID string, instruction string) (tea.Model, tea.Cmd) {
 	// Gather tasks in scope
 	var scopeTasks []model.Task
-	if scopeGroupID != "" {
+	if scopeGroupID == "__all__" {
+		scopeTasks = append(scopeTasks, m.store.Tasks...)
+	} else if scopeGroupID != "" {
 		scopeTasks = store.GetTasksForGroup(m.store, scopeGroupID)
 	} else {
 		for _, t := range m.store.Tasks {
@@ -1112,8 +1249,21 @@ func applyGroupActionResult(projectRoot string, output string) {
 			ID:          id,
 			Name:        ng.Name,
 			Description: ng.Description,
+			ParentGroup: ng.ParentGroup,
 			Created:     model.Now(),
 		})
+	}
+
+	// Apply group hierarchy updates (re-parenting existing groups)
+	for _, ug := range result.UpdatedGroups {
+		if ug.ID == "" {
+			continue
+		}
+		g := store.FindGroup(s, ug.ID)
+		if g == nil {
+			continue
+		}
+		g.ParentGroup = ug.ParentGroup
 	}
 
 	// Apply task updates

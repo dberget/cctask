@@ -23,8 +23,8 @@ func renderStatusBar(mode model.ViewMode, message string, cols int) string {
 			keyHint("a", "add"), keyHint("e", "edit"), keyHint("d", "delete"),
 			keyHint("g", "project"), keyHint("r", "run"), keyHint("p", "plan"),
 			keyHint("s", "status"), keyHint("c", "prompt"), keyHint("/", "filter"),
-			keyHint("v", "view"), keyHint("m", "merge"), keyHint("Space", "collapse"),
-			keyHint("Tab", "switch"),
+			keyHint("v", "view"), keyHint("m", "merge"), keyHint("t", "theme"),
+			keyHint("Enter", "detail"), keyHint("?", "help"), keyHint("q", "quit"),
 		}
 	case model.ModeDetail:
 		hints = []string{
@@ -63,6 +63,10 @@ func renderStatusBar(mode model.ViewMode, message string, cols int) string {
 			keyHint("c", "ask claude"), keyHint("s", "status"),
 			keyHint("Esc", "back"),
 		}
+	case model.ModeHelp:
+		hints = []string{
+			keyHint("?/Esc", "back"),
+		}
 	case model.ModeTaskViewAsk, model.ModeGroupPrompt:
 		hints = []string{
 			keyHint("Enter", "send"), keyHint("Esc", "cancel"),
@@ -79,4 +83,66 @@ func renderStatusBar(mode model.ViewMode, message string, cols int) string {
 	}
 
 	return horizontalLine(lineWidth) + "\n" + hintLine
+}
+
+func renderHelp() string {
+	h := func(title string) string { return styleCyanBold.Render(title) }
+	k := func(key, desc string) string {
+		return "  " + styleCyanBold.Render(padRight(key, 14)) + desc
+	}
+
+	var lines []string
+	lines = append(lines, h("List View"))
+	lines = append(lines, k("j/k, Up/Down", "Navigate items"))
+	lines = append(lines, k("Enter", "Open detail / group view"))
+	lines = append(lines, k("v", "Full-screen task view"))
+	lines = append(lines, k("a", "Add new task"))
+	lines = append(lines, k("e", "Edit task / plan"))
+	lines = append(lines, k("d", "Delete task / project"))
+	lines = append(lines, k("s", "Cycle status"))
+	lines = append(lines, k("g", "Assign project"))
+	lines = append(lines, k("r", "Run task with Claude"))
+	lines = append(lines, k("p", "View / generate plan"))
+	lines = append(lines, k("c", "Prompt Claude on scope"))
+	lines = append(lines, k("m", "Merge plans"))
+	lines = append(lines, k("/", "Filter tasks"))
+	lines = append(lines, k("t", "Change theme"))
+	lines = append(lines, k("Space", "Collapse / expand group"))
+	lines = append(lines, k("Tab", "Switch to process panel"))
+	lines = append(lines, k("q", "Quit"))
+	lines = append(lines, "")
+
+	lines = append(lines, h("Scroll (fullscreen views)"))
+	lines = append(lines, k("j/k", "Scroll line"))
+	lines = append(lines, k("d / Ctrl+D", "Half-page down"))
+	lines = append(lines, k("u / Ctrl+U", "Half-page up"))
+	lines = append(lines, k("gg", "Go to top"))
+	lines = append(lines, k("G", "Go to bottom"))
+	lines = append(lines, "")
+
+	lines = append(lines, h("Task View"))
+	lines = append(lines, k("r", "Run"))
+	lines = append(lines, k("e", "Edit"))
+	lines = append(lines, k("p", "Plan"))
+	lines = append(lines, k("c", "Ask Claude"))
+	lines = append(lines, k("s", "Cycle status"))
+	lines = append(lines, "")
+
+	lines = append(lines, h("Text Input"))
+	lines = append(lines, k("Enter", "Submit"))
+	lines = append(lines, k("Esc", "Cancel"))
+	lines = append(lines, k("Ctrl+A", "Jump to start"))
+	lines = append(lines, k("Ctrl+E", "Jump to end"))
+	lines = append(lines, k("Ctrl+W", "Delete word"))
+	lines = append(lines, "")
+
+	lines = append(lines, h("Plan Editor"))
+	lines = append(lines, k("i/a/o", "Enter insert mode"))
+	lines = append(lines, k("Ctrl+S", "Save"))
+	lines = append(lines, k("q / Esc", "Cancel"))
+	lines = append(lines, "")
+
+	lines = append(lines, styleGray.Render("Press ? or Esc to close"))
+
+	return strings.Join(lines, "\n")
 }

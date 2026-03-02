@@ -22,6 +22,8 @@ const (
 	ModeTaskView
 	ModeTaskViewAsk
 	ModeGroupPrompt
+	ModeThemePicker
+	ModeHelp
 )
 
 func (m ViewMode) String() string {
@@ -64,6 +66,10 @@ func (m ViewMode) String() string {
 		return "task-view-ask"
 	case ModeGroupPrompt:
 		return "group-prompt"
+	case ModeThemePicker:
+		return "theme-picker"
+	case ModeHelp:
+		return "help"
 	default:
 		return "unknown"
 	}

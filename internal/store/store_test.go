@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/davidberget/cctask-go/internal/model"
 )
 
 func TestSlugify(t *testing.T) {
@@ -191,9 +193,12 @@ func TestBuildListItems(t *testing.T) {
 	s, _ = LoadStore(dir)
 
 	items = BuildListItems(s, "", nil)
-	// Should be: project header, t1 under project, t2 unassigned
-	if len(items) != 3 {
-		t.Errorf("expected 3 items (1 project + 2 tasks), got %d", len(items))
+	// Should be: All Tasks header, project header, t1 under project, t2 unassigned
+	if len(items) != 4 {
+		t.Errorf("expected 4 items (All Tasks + 1 project + 2 tasks), got %d", len(items))
+	}
+	if items[0].Kind != model.ListItemAllTasks {
+		t.Error("expected first item to be AllTasks")
 	}
 
 	// Filter

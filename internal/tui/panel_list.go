@@ -9,7 +9,45 @@ import (
 	"github.com/davidberget/cctask-go/internal/store"
 )
 
-func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListItem, selectedIndex int, isFocused bool, height int, collapsed map[string]bool) string {
+// listLineForIndex returns the rendered line number for a given list item index.
+// This is used to auto-scroll the list panel to keep the selection visible.
+func listLineForIndex(s *model.TaskStore, items []model.ListItem, targetIndex int) int {
+	hasProjects := len(s.Groups) > 0
+	lineNum := 2 // header + separator
+
+	for i, item := range items {
+		if i == targetIndex {
+			return lineNum
+		}
+
+		if item.Kind == model.ListItemAllTasks {
+			lineNum++
+			continue
+		}
+
+		if item.Kind == model.ListItemProject {
+			if i > 0 {
+				lineNum++ // blank line before project
+			}
+			lineNum++
+			continue
+		}
+
+		// Task item
+		task := item.Task
+		if hasProjects && task.Group == "" {
+			prevIsGrouped := i > 0 && (items[i-1].Kind == model.ListItemProject ||
+				(items[i-1].Kind == model.ListItemTask && items[i-1].Task.Group != ""))
+			if i == 0 || prevIsGrouped {
+				lineNum += 2 // blank line + "Unassigned"
+			}
+		}
+		lineNum++
+	}
+	return lineNum
+}
+
+func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListItem, selectedIndex int, isFocused bool, height int, collapsed map[string]bool, scrollOffset int) string {
 	hasProjects := len(s.Groups) > 0
 
 	titleColor := colorWhite
@@ -30,6 +68,17 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 		for i, item := range items {
 			isSelected := isFocused && i == selectedIndex
 			depthIndent := strings.Repeat("  ", item.Depth)
+
+			if item.Kind == model.ListItemAllTasks {
+				nameStyle := lipgloss.NewStyle().Bold(true).Foreground(colorWhite)
+				if isSelected {
+					nameStyle = lipgloss.NewStyle().Bold(true).Foreground(colorPrimary)
+				}
+				line := nameStyle.Render("● All Tasks") +
+					styleGray.Render(fmt.Sprintf("  (%d)", len(s.Tasks)))
+				lines = append(lines, line)
+				continue
+			}
 
 			if item.Kind == model.ListItemProject {
 				if i > 0 {
@@ -114,6 +163,22 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 				planMark
 			lines = append(lines, line)
 		}
+	}
+
+	// Apply vertical scrolling to fit within height
+	if height > 0 && len(lines) > height {
+		maxOffset := len(lines) - height
+		if scrollOffset > maxOffset {
+			scrollOffset = maxOffset
+		}
+		if scrollOffset < 0 {
+			scrollOffset = 0
+		}
+		end := scrollOffset + height
+		if end > len(lines) {
+			end = len(lines)
+		}
+		lines = lines[scrollOffset:end]
 	}
 
 	content := strings.Join(lines, "\n")

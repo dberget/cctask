@@ -13,6 +13,9 @@ func renderDetailPanel(s *model.TaskStore, projectRoot string, selectedItem *mod
 	if selectedItem == nil {
 		return styleGray.Render("Select a task or project to see details")
 	}
+	if selectedItem.Kind == model.ListItemAllTasks {
+		return renderAllTasksDetail(s, width)
+	}
 	if selectedItem.Kind == model.ListItemTask {
 		return renderTaskDetail(selectedItem.Task, projectRoot, width)
 	}
@@ -20,6 +23,52 @@ func renderDetailPanel(s *model.TaskStore, projectRoot string, selectedItem *mod
 		return renderGroupDetail(selectedItem.Project, s, projectRoot, width)
 	}
 	return ""
+}
+
+func renderAllTasksDetail(s *model.TaskStore, width int) string {
+	if width > maxDetailWidth {
+		width = maxDetailWidth
+	}
+
+	var lines []string
+	lines = append(lines, styleCyanBold.Render("All Tasks"))
+	lines = append(lines, "")
+
+	pending, inProgress, done := 0, 0, 0
+	for _, t := range s.Tasks {
+		switch t.Status {
+		case model.StatusPending:
+			pending++
+		case model.StatusInProgress:
+			inProgress++
+		case model.StatusDone:
+			done++
+		}
+	}
+
+	lines = append(lines, styleGray.Render(padRight("Total:", 14))+fmt.Sprintf("%d", len(s.Tasks)))
+	lines = append(lines, styleGray.Render(padRight("Pending:", 14))+fmt.Sprintf("%d", pending))
+	lines = append(lines, styleGray.Render(padRight("In Progress:", 14))+fmt.Sprintf("%d", inProgress))
+	lines = append(lines, styleGray.Render(padRight("Done:", 14))+fmt.Sprintf("%d", done))
+	lines = append(lines, styleGray.Render(padRight("Projects:", 14))+fmt.Sprintf("%d", len(s.Groups)))
+
+	lines = append(lines, "")
+	sepWidth := min(width-2, 50)
+	lines = append(lines, sectionHeader("Tasks", sepWidth))
+	lines = append(lines, "")
+
+	if len(s.Tasks) == 0 {
+		lines = append(lines, styleGray.Render("No tasks yet"))
+	} else {
+		for _, t := range s.Tasks {
+			lines = append(lines, styleGray.Render(padRight(t.ID, 5))+
+				statusIcon(string(t.Status))+" "+
+				truncate(t.Title, width-12))
+		}
+	}
+
+	content := strings.Join(lines, "\n")
+	return lipgloss.NewStyle().PaddingLeft(1).Width(width).Render(content)
 }
 
 func renderTaskDetail(task *model.Task, projectRoot string, width int) string {

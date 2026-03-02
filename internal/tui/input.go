@@ -46,6 +46,22 @@ func (m TextInputModel) Update(msg tea.KeyMsg) (TextInputModel, tea.Cmd) {
 		if m.Cursor < len(m.Value) {
 			m.Cursor++
 		}
+	case msg.Type == tea.KeyCtrlA:
+		m.Cursor = 0
+	case msg.Type == tea.KeyCtrlE:
+		m.Cursor = len(m.Value)
+	case msg.Type == tea.KeyCtrlW:
+		if m.Cursor > 0 {
+			i := m.Cursor - 1
+			for i > 0 && m.Value[i-1] == ' ' {
+				i--
+			}
+			for i > 0 && m.Value[i-1] != ' ' {
+				i--
+			}
+			m.Value = m.Value[:i] + m.Value[m.Cursor:]
+			m.Cursor = i
+		}
 	case msg.Type == tea.KeySpace:
 		m.Value = m.Value[:m.Cursor] + " " + m.Value[m.Cursor:]
 		m.Cursor++
@@ -110,11 +126,11 @@ func (m SelectInputModel) Update(msg tea.KeyMsg) (SelectInputModel, tea.Cmd) {
 			val := m.Items[m.Index].Value
 			return m, func() tea.Msg { return SelectSubmitMsg{Value: val} }
 		}
-	case msg.Type == tea.KeyUp:
+	case msg.Type == tea.KeyUp || (msg.Type == tea.KeyRunes && string(msg.Runes) == "k"):
 		if m.Index > 0 {
 			m.Index--
 		}
-	case msg.Type == tea.KeyDown:
+	case msg.Type == tea.KeyDown || (msg.Type == tea.KeyRunes && string(msg.Runes) == "j"):
 		if m.Index < len(m.Items)-1 {
 			m.Index++
 		}

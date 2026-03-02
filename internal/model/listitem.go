@@ -5,6 +5,7 @@ type ListItemKind int
 const (
 	ListItemProject ListItemKind = iota
 	ListItemTask
+	ListItemAllTasks
 )
 
 type ListItem struct {

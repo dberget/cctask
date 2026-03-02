@@ -117,3 +117,36 @@ func planStatus(hasPlan bool) string {
 	}
 	return styleDim.Render("none")
 }
+
+// ApplyTheme sets all color and style variables from a named theme preset.
+func ApplyTheme(name string) {
+	tc, ok := Themes[name]
+	if !ok {
+		tc = Themes["default"]
+	}
+
+	colorPrimary = lipgloss.Color(tc.Primary)
+	colorSecondary = lipgloss.Color(tc.Secondary)
+	colorAccent = lipgloss.Color(tc.Accent)
+	colorSuccess = lipgloss.Color(tc.Success)
+	colorError = lipgloss.Color(tc.Error)
+	colorMagenta = lipgloss.Color(tc.Magenta)
+	colorWhite = lipgloss.Color(tc.White)
+	colorBright = lipgloss.Color(tc.Bright)
+	colorDim = lipgloss.Color(tc.Dim)
+	colorBorder = lipgloss.Color(tc.Border)
+
+	// Rebuild derived styles
+	styleTitle = lipgloss.NewStyle().Bold(true).Foreground(colorBright)
+	styleCyan = lipgloss.NewStyle().Foreground(colorPrimary)
+	styleCyanBold = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
+	styleGray = lipgloss.NewStyle().Foreground(colorSecondary)
+	styleDim = lipgloss.NewStyle().Foreground(colorDim)
+	styleYellow = lipgloss.NewStyle().Foreground(colorAccent)
+	styleGreen = lipgloss.NewStyle().Foreground(colorSuccess)
+	styleRed = lipgloss.NewStyle().Foreground(colorError)
+	styleMagenta = lipgloss.NewStyle().Foreground(colorMagenta)
+	styleSelected = lipgloss.NewStyle().Foreground(colorPrimary)
+	styleCursor = lipgloss.NewStyle().Background(colorBright).Foreground(lipgloss.Color("#111827"))
+	styleBorder = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(colorBorder)
+}
