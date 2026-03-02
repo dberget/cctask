@@ -23,6 +23,8 @@ const (
 	ModeTaskViewAsk
 	ModeGroupPrompt
 	ModeThemePicker
+	ModeContextView
+	ModeEditContext
 	ModeHelp
 )
 
@@ -68,6 +70,10 @@ func (m ViewMode) String() string {
 		return "group-prompt"
 	case ModeThemePicker:
 		return "theme-picker"
+	case ModeContextView:
+		return "context-view"
+	case ModeEditContext:
+		return "edit-context"
 	case ModeHelp:
 		return "help"
 	default:
@@ -78,7 +84,7 @@ func (m ViewMode) String() string {
 // IsNavigable returns true if the mode allows j/k/arrow navigation and action keys
 func (m ViewMode) IsNavigable() bool {
 	switch m {
-	case ModeList, ModeDetail, ModePlan, ModeGroupDetail, ModeProcessDetail, ModeTaskView:
+	case ModeList, ModeDetail, ModePlan, ModeGroupDetail, ModeProcessDetail, ModeTaskView, ModeContextView:
 		return true
 	default:
 		return false

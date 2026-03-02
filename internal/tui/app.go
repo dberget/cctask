@@ -36,6 +36,7 @@ const (
 	actionCombineName
 	actionFollowUp
 	actionEditPlanContent
+	actionEditContext
 	actionGroupPrompt
 )
 
@@ -373,7 +374,7 @@ func (m Model) renderContent(contentHeight int) string {
 	case model.ModeConfirmDelete:
 		return styleYellow.Render(m.confirmMsg) + " " + styleGray.Render("(y/n)")
 
-	case model.ModeEditPlan:
+	case model.ModeEditPlan, model.ModeEditContext:
 		return m.editor.View()
 
 	case model.ModePlan:
@@ -400,6 +401,10 @@ func (m Model) renderContent(contentHeight int) string {
 			return renderScrollable(content, m.scrollOffset, contentHeight)
 		}
 		return ""
+
+	case model.ModeContextView:
+		content := renderContextView(m.projectRoot)
+		return renderScrollable(content, m.scrollOffset, contentHeight)
 
 	case model.ModeHelp:
 		return renderScrollable(renderHelp(), m.scrollOffset, contentHeight)
@@ -478,7 +483,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case model.ModeConfirmDelete:
 		return m.handleConfirm(msg)
 
-	case model.ModeEditPlan:
+	case model.ModeEditPlan, model.ModeEditContext:
 		var cmd tea.Cmd
 		m.editor, cmd = m.editor.Update(msg)
 		return m, cmd
@@ -489,7 +494,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) isFullscreenMode() bool {
 	switch m.mode {
-	case model.ModePlan, model.ModeTaskView, model.ModeGroupDetail, model.ModeProcessDetail, model.ModeHelp:
+	case model.ModePlan, model.ModeTaskView, model.ModeGroupDetail, model.ModeProcessDetail, model.ModeContextView, model.ModeHelp:
 		return true
 	}
 	return false
@@ -679,6 +684,12 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if key == "c" && m.mode == model.ModeList && m.focusPanel == model.FocusMain {
 		return m.handleGroupPrompt()
+	}
+
+	if key == "x" && m.mode == model.ModeList {
+		m.scrollOffset = 0
+		m.mode = model.ModeContextView
+		return m, nil
 	}
 
 	if key == "t" && m.mode == model.ModeList {
@@ -872,6 +883,12 @@ func (m Model) handleMultiCheckSubmit(selected []string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleEditorSave(content string) (tea.Model, tea.Cmd) {
+	if m.action == actionEditContext {
+		store.SaveContext(m.projectRoot, content)
+		m.mode = m.returnMode
+		m.action = actionNone
+		return m, flashCmd("Context saved")
+	}
 	if m.actionPlanFile != "" {
 		store.SavePlan(m.projectRoot, m.actionPlanFile, content)
 		m.reload()
@@ -887,6 +904,15 @@ func (m Model) handleEditorSave(content string) (tea.Model, tea.Cmd) {
 // --- Action initiators ---
 
 func (m Model) handleEdit() (tea.Model, tea.Cmd) {
+	if m.mode == model.ModeContextView {
+		content := store.LoadContext(m.projectRoot)
+		m.action = actionEditContext
+		m.returnMode = model.ModeContextView
+		m.editor = NewEditor("Edit Project Context", content, m.height-10, m.width-12)
+		m.mode = model.ModeEditContext
+		return m, nil
+	}
+
 	if m.mode == model.ModePlan {
 		planFile := ""
 		title := ""
@@ -1167,7 +1193,7 @@ func (m Model) spawnGroupAction(scopeGroupID string, instruction string) (tea.Mo
 		}
 	}
 
-	promptText := prompt.BuildGroupActionPrompt(scopeTasks, m.store.Groups, scopeLabel, instruction)
+	promptText := prompt.BuildGroupActionPrompt(m.projectRoot, scopeTasks, m.store.Groups, scopeLabel, instruction)
 
 	label := "Prompt: " + scopeLabel
 	if m.runningLabels[label] {
@@ -1325,7 +1351,7 @@ func (m Model) spawnPlanGeneration(task *model.Task) (tea.Model, tea.Cmd) {
 	store.UpdateTask(m.projectRoot, task.ID, map[string]interface{}{"status": string(model.StatusPlanning)})
 	m.reload()
 
-	promptText := prompt.BuildPlanGenerationPrompt(task)
+	promptText := prompt.BuildPlanGenerationPrompt(m.projectRoot, task)
 	taskID := task.ID
 	taskTitle := task.Title
 	projectRoot := m.projectRoot
@@ -1382,7 +1408,7 @@ func (m Model) spawnGroupPlanGeneration(group *model.Group) (tea.Model, tea.Cmd)
 
 
 	tasks := store.GetTasksForGroup(m.store, group.ID)
-	promptText := prompt.BuildGroupPlanGenerationPrompt(group, tasks)
+	promptText := prompt.BuildGroupPlanGenerationPrompt(m.projectRoot, group, tasks)
 	groupID := group.ID
 	projectRoot := m.projectRoot
 

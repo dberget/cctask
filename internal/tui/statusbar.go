@@ -22,9 +22,10 @@ func renderStatusBar(mode model.ViewMode, message string, cols int) string {
 		hints = []string{
 			keyHint("a", "add"), keyHint("e", "edit"), keyHint("d", "delete"),
 			keyHint("g", "project"), keyHint("r", "run"), keyHint("p", "plan"),
-			keyHint("s", "status"), keyHint("c", "prompt"), keyHint("/", "filter"),
-			keyHint("v", "view"), keyHint("m", "merge"), keyHint("t", "theme"),
-			keyHint("Enter", "detail"), keyHint("?", "help"), keyHint("q", "quit"),
+			keyHint("s", "status"), keyHint("c", "prompt"), keyHint("x", "context"),
+			keyHint("/", "filter"), keyHint("v", "view"), keyHint("m", "merge"),
+			keyHint("t", "theme"), keyHint("Enter", "detail"), keyHint("?", "help"),
+			keyHint("q", "quit"),
 		}
 	case model.ModeDetail:
 		hints = []string{
@@ -52,10 +53,14 @@ func renderStatusBar(mode model.ViewMode, message string, cols int) string {
 		}
 	case model.ModeProcessDetail:
 		hints = []string{keyHint("o", "continue in claude"), keyHint("Esc", "back")}
-	case model.ModeEditPlan:
+	case model.ModeEditPlan, model.ModeEditContext:
 		hints = []string{
 			keyHint("i", "insert"), keyHint("Ctrl+S", "save"),
 			keyHint("q/Esc", "cancel"),
+		}
+	case model.ModeContextView:
+		hints = []string{
+			keyHint("e", "edit"), keyHint("Esc", "back"),
 		}
 	case model.ModeTaskView:
 		hints = []string{
@@ -105,6 +110,7 @@ func renderHelp() string {
 	lines = append(lines, k("p", "View / generate plan"))
 	lines = append(lines, k("c", "Prompt Claude on scope"))
 	lines = append(lines, k("m", "Merge plans"))
+	lines = append(lines, k("x", "View/edit project context"))
 	lines = append(lines, k("/", "Filter tasks"))
 	lines = append(lines, k("t", "Change theme"))
 	lines = append(lines, k("Space", "Collapse / expand group"))
@@ -126,6 +132,11 @@ func renderHelp() string {
 	lines = append(lines, k("p", "Plan"))
 	lines = append(lines, k("c", "Ask Claude"))
 	lines = append(lines, k("s", "Cycle status"))
+	lines = append(lines, "")
+
+	lines = append(lines, h("Context View"))
+	lines = append(lines, k("e", "Edit context"))
+	lines = append(lines, "  "+styleGray.Render("Global context from .cctask/context.md is prepended to all Claude prompts"))
 	lines = append(lines, "")
 
 	lines = append(lines, h("Text Input"))
