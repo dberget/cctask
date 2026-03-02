@@ -215,6 +215,10 @@ func UpdateTask(projectRoot string, id string, updates map[string]interface{}) (
 			if val, ok := v.(string); ok {
 				task.PlanFile = val
 			}
+		case "mergedInto":
+			if val, ok := v.(string); ok {
+				task.MergedInto = val
+			}
 		}
 	}
 	task.Updated = model.Now()
@@ -427,13 +431,20 @@ func BuildListItems(s *model.TaskStore, filter string, collapsed map[string]bool
 		items = appendGroupItems(items, s, group.ID, 0, filter, collapsed, matchesFilter)
 	}
 
-	// Unassigned tasks
+	// Unassigned tasks (merged ones last)
+	var unassignedMerged []model.ListItem
 	for i := range s.Tasks {
 		t := s.Tasks[i]
 		if t.Group == "" && matchesFilter(t) {
-			items = append(items, model.ListItem{Kind: model.ListItemTask, Task: &t})
+			item := model.ListItem{Kind: model.ListItemTask, Task: &t}
+			if t.Status == model.StatusMerged {
+				unassignedMerged = append(unassignedMerged, item)
+			} else {
+				items = append(items, item)
+			}
 		}
 	}
+	items = append(items, unassignedMerged...)
 
 	return items
 }
@@ -526,11 +537,15 @@ func tagsContain(tags []string, query string) bool {
 }
 
 func filterGroupTasks(s *model.TaskStore, groupID string, matches func(model.Task) bool) []model.Task {
-	var tasks []model.Task
+	var active, merged []model.Task
 	for _, t := range s.Tasks {
 		if t.Group == groupID && matches(t) {
-			tasks = append(tasks, t)
+			if t.Status == model.StatusMerged {
+				merged = append(merged, t)
+			} else {
+				active = append(active, t)
+			}
 		}
 	}
-	return tasks
+	return append(active, merged...)
 }

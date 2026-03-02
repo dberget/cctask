@@ -26,6 +26,7 @@ const (
 	ModeContextView
 	ModeEditContext
 	ModeHelp
+	ModeProcessChat
 )
 
 func (m ViewMode) String() string {
@@ -76,6 +77,8 @@ func (m ViewMode) String() string {
 		return "edit-context"
 	case ModeHelp:
 		return "help"
+	case ModeProcessChat:
+		return "process-chat"
 	default:
 		return "unknown"
 	}

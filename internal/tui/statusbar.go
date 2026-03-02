@@ -19,18 +19,7 @@ func renderStatusBar(mode model.ViewMode, selected *model.ListItem, message stri
 	var hints []string
 	switch mode {
 	case model.ModeList:
-<<<<<<< HEAD
 		hints = listHints(selected)
-=======
-		hints = []string{
-			keyHint("a", "add"), keyHint("e", "edit"), keyHint("d", "delete"),
-			keyHint("g", "project"), keyHint("r", "run"), keyHint("p", "plan"),
-			keyHint("s", "status"), keyHint("c", "prompt"), keyHint("x", "context"),
-			keyHint("/", "filter"), keyHint("v", "view"), keyHint("m", "merge"),
-			keyHint("t", "theme"), keyHint("Enter", "detail"), keyHint("?", "help"),
-			keyHint("q", "quit"),
-		}
->>>>>>> 119d466b6bd921a6b935de8049d38903e21a7cd1
 	case model.ModeDetail:
 		hints = []string{
 			keyHint("e", "edit desc"), keyHint("r", "run"), keyHint("p", "plan"),
@@ -56,7 +45,9 @@ func renderStatusBar(mode model.ViewMode, selected *model.ListItem, message stri
 			keyHint("Esc", "cancel"),
 		}
 	case model.ModeProcessDetail:
-		hints = []string{keyHint("o", "continue in claude"), keyHint("Esc", "back")}
+		hints = []string{keyHint("c", "chat"), keyHint("o", "full claude"), keyHint("Esc", "back")}
+	case model.ModeProcessChat:
+		hints = []string{keyHint("Enter", "send"), keyHint("Esc", "cancel")}
 	case model.ModeEditPlan, model.ModeEditContext:
 		hints = []string{
 			keyHint("i", "insert"), keyHint("Ctrl+S", "save"),

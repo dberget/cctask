@@ -196,7 +196,7 @@ func (m MultiCheckModel) Update(msg tea.KeyMsg) (MultiCheckModel, tea.Cmd) {
 		if m.Index < len(m.Items)-1 {
 			m.Index++
 		}
-	case msg.Type == tea.KeyRunes && string(msg.Runes) == " ":
+	case msg.Type == tea.KeySpace:
 		item := m.Items[m.Index]
 		if !item.Disabled {
 			if m.Selected[item.Value] {

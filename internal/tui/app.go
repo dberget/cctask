@@ -62,6 +62,7 @@ type Model struct {
 	multiCheck  MultiCheckModel
 	form        FormModel
 	editor      EditorModel
+	chatInput   ChatInputModel
 
 	// Action context
 	action           actionContext
@@ -187,6 +188,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case claude.ProcessDoneMsg:
 		return m.handleProcessDone(msg)
+
+	case claude.StreamEventMsg:
+		return m.handleStreamEvent(msg)
+
+	case claude.StreamDoneMsg:
+		return m.handleStreamDone(msg)
+
+	case claude.ChatSubmitMsg:
+		return m.handleChatSubmit(msg)
+
+	case chatCancelMsg:
+		m.mode = model.ModeProcessDetail
+		return m, nil
 
 	case ProcessAutoRemoveMsg:
 		return m.handleProcessAutoRemove(msg)
@@ -397,8 +411,16 @@ func (m Model) renderContent(contentHeight int) string {
 
 	case model.ModeProcessDetail:
 		if m.processIdx < len(m.processes) {
-			content := renderProcessDetail(&m.processes[m.processIdx])
+			content := renderRichProcessDetail(&m.processes[m.processIdx], m.width-8)
 			return renderScrollable(content, m.scrollOffset, contentHeight)
+		}
+		return ""
+
+	case model.ModeProcessChat:
+		if m.processIdx < len(m.processes) {
+			content := renderRichProcessDetail(&m.processes[m.processIdx], m.width-8)
+			scrolled := renderScrollable(content, m.scrollOffset, contentHeight-2)
+			return scrolled + "\n" + m.chatInput.View()
 		}
 		return ""
 
@@ -486,6 +508,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case model.ModeEditPlan, model.ModeEditContext:
 		var cmd tea.Cmd
 		m.editor, cmd = m.editor.Update(msg)
+		return m, cmd
+
+	case model.ModeProcessChat:
+		var cmd tea.Cmd
+		m.chatInput, cmd = m.chatInput.Update(msg)
 		return m, cmd
 	}
 
@@ -644,9 +671,22 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if proc.Status == model.ProcessRunning {
 				return m, flashCmd("Still running — press Enter to view output")
 			}
-			// Completed: launch interactive claude --continue
-			return m, claude.ExecContinue(m.projectRoot)
+			// Completed: launch interactive claude, resuming this process's session
+			return m, claude.ExecContinue(m.projectRoot, proc.SessionID)
 		}
+	}
+
+	if key == "c" && m.mode == model.ModeProcessDetail && m.processIdx < len(m.processes) {
+		proc := &m.processes[m.processIdx]
+		if proc.Status == model.ProcessRunning {
+			return m, flashCmd("Wait for Claude to finish")
+		}
+		if proc.SessionID == "" {
+			return m, flashCmd("No session — can't follow up")
+		}
+		m.chatInput = NewChatInput(proc.ID, proc.SessionID)
+		m.mode = model.ModeProcessChat
+		return m, nil
 	}
 
 	if key == "a" && m.mode == model.ModeList {
@@ -993,6 +1033,9 @@ func (m Model) cycleStatus() (tea.Model, tea.Cmd) {
 	if t == nil {
 		return m, nil
 	}
+	if t.Status == model.StatusMerged {
+		return m, flashCmd("Cannot change status of merged task")
+	}
 	next := t.Status.Next()
 	store.UpdateTask(m.projectRoot, t.ID, map[string]interface{}{"status": next})
 	m.reload()
@@ -1085,13 +1128,62 @@ func (m Model) handlePlan() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleCombine() (tea.Model, tea.Cmd) {
+	// Determine scope: if cursor is on a group or task within a group, scope to that group
+	var scopeGroupID string
+	var scopeLabel string
+	if m.selectedAllTasks() {
+		scopeGroupID = ""
+		scopeLabel = ""
+	} else if g := m.selectedGroup(); g != nil {
+		scopeGroupID = g.ID
+		scopeLabel = g.Name
+	} else if t := m.selectedTask(); t != nil {
+		if t.Group != "" {
+			scopeGroupID = t.Group
+			if g := store.FindGroup(m.store, t.Group); g != nil {
+				scopeLabel = g.Name
+			} else {
+				scopeLabel = t.Group
+			}
+		}
+	}
+
+	// Build set of group IDs in scope (the group + all descendants)
+	scopeGroups := map[string]bool{}
+	if scopeGroupID != "" {
+		scopeGroups[scopeGroupID] = true
+		for _, id := range store.GetAllDescendantGroupIDs(m.store, scopeGroupID) {
+			scopeGroups[id] = true
+		}
+	}
+
+	inScope := func(t model.Task) bool {
+		if t.Status == model.StatusMerged {
+			return false
+		}
+		if scopeGroupID == "" {
+			return true
+		}
+		return scopeGroups[t.Group]
+	}
+
 	withPlans := store.GetTasksWithPlans(m.projectRoot, m.store)
-	if len(withPlans) < 2 {
+
+	planCount := 0
+	for _, wp := range withPlans {
+		if inScope(wp) {
+			planCount++
+		}
+	}
+	if planCount < 2 {
 		return m, flashCmd("Need at least 2 tasks with plans to combine")
 	}
 
 	var items []CheckItem
 	for _, t := range m.store.Tasks {
+		if !inScope(t) {
+			continue
+		}
 		hasPlan := false
 		for _, wp := range withPlans {
 			if wp.ID == t.ID {
@@ -1106,7 +1198,11 @@ func (m Model) handleCombine() (tea.Model, tea.Cmd) {
 		})
 	}
 
-	m.multiCheck = NewMultiCheck("Select tasks to combine plans:", items)
+	title := "Select tasks to combine plans:"
+	if scopeLabel != "" {
+		title = fmt.Sprintf("Select tasks to combine plans (%s):", scopeLabel)
+	}
+	m.multiCheck = NewMultiCheck(title, items)
 	m.mode = model.ModeCombineSelect
 	return m, nil
 }
@@ -1213,33 +1309,23 @@ func (m Model) spawnGroupAction(scopeGroupID string, instruction string) (tea.Mo
 	m.runningLabels[label] = true
 
 	procID := fmt.Sprintf("group-prompt-%d", time.Now().Unix())
-	logFile := filepath.Join(m.projectRoot, ".cctask", "logs", procID+".log")
 	proc := model.ClaudeProcess{
-		ID:      procID,
-		Label:   label,
-		Status:  model.ProcessRunning,
-		Output:  "Processing tasks...",
-		LogFile: logFile,
+		ID:               procID,
+		Label:            label,
+		Status:           model.ProcessRunning,
+		Output:           "Processing tasks...",
+		CompletionAction: model.CompletionApplyGroupAction,
 	}
 	m.processes = append(m.processes, proc)
 
 	m.mode = model.ModeList
 	m.action = actionNone
 
-	projectRoot := m.projectRoot
-
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnPlanCmd(m.program, projectRoot, procID, label, promptText)
-		innerCmd := cmd
-		cmd = func() tea.Msg {
-			result := innerCmd()
-			if done, ok := result.(claude.ProcessDoneMsg); ok && done.Err == nil {
-				applyGroupActionResult(projectRoot, done.Output)
-			}
-			return result
-		}
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan")
 	} else {
+		projectRoot := m.projectRoot
 		cmd = func() tea.Msg {
 			output, logFile, err := runClaudePipe(projectRoot, procID, promptText)
 			if err != nil {
@@ -1345,43 +1431,33 @@ func (m Model) spawnPlanGeneration(task *model.Task) (tea.Model, tea.Cmd) {
 	m.runningLabels[label] = true
 
 	procID := fmt.Sprintf("plan-%s-%d", task.ID, time.Now().Unix())
-	logFile := filepath.Join(m.projectRoot, ".cctask", "logs", procID+".log")
 	proc := model.ClaudeProcess{
-		ID:      procID,
-		Label:   label,
-		Status:  model.ProcessRunning,
-		Output:  "Waiting for claude...",
-		LogFile: logFile,
+		ID:               procID,
+		Label:            label,
+		Status:           model.ProcessRunning,
+		Output:           "Waiting for claude...",
+		IsInteractive:    true,
+		CompletionAction: model.CompletionSavePlan,
+		CompletionMeta: map[string]string{
+			"taskID":    task.ID,
+			"taskTitle": task.Title,
+		},
 	}
 	m.processes = append(m.processes, proc)
-
 
 	// Set task status to planning
 	store.UpdateTask(m.projectRoot, task.ID, map[string]interface{}{"status": string(model.StatusPlanning)})
 	m.reload()
 
 	promptText := prompt.BuildPlanGenerationPrompt(m.projectRoot, task)
-	taskID := task.ID
-	taskTitle := task.Title
-	projectRoot := m.projectRoot
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		// Use streaming mode — output updates appear live
-		cmd = claude.SpawnPlanCmd(m.program, projectRoot, procID, label, promptText)
-		// Wrap to save plan on completion
-		innerCmd := cmd
-		cmd = func() tea.Msg {
-			result := innerCmd()
-			if done, ok := result.(claude.ProcessDoneMsg); ok && done.Err == nil {
-				filename := store.PlanFilenameForTask(&model.Task{ID: taskID, Title: taskTitle})
-				store.SavePlan(projectRoot, filename, done.Output)
-				store.UpdateTask(projectRoot, taskID, map[string]interface{}{"planFile": filename})
-			}
-			return result
-		}
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan")
 	} else {
-		// Fallback: synchronous pipe
+		projectRoot := m.projectRoot
+		taskID := task.ID
+		taskTitle := task.Title
 		cmd = func() tea.Msg {
 			output, logFile, err := runClaudePipe(projectRoot, procID, promptText)
 			if err != nil {
@@ -1394,7 +1470,7 @@ func (m Model) spawnPlanGeneration(task *model.Task) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	return m, tea.Batch(cmd, flashCmd(fmt.Sprintf("Generating plan for %s...", taskID)))
+	return m, tea.Batch(cmd, flashCmd(fmt.Sprintf("Generating plan for %s...", task.ID)))
 }
 
 func (m Model) spawnGroupPlanGeneration(group *model.Group) (tea.Model, tea.Cmd) {
@@ -1405,40 +1481,26 @@ func (m Model) spawnGroupPlanGeneration(group *model.Group) (tea.Model, tea.Cmd)
 	m.runningLabels[label] = true
 
 	procID := fmt.Sprintf("plan-%s-%d", group.ID, time.Now().Unix())
-	logFile := filepath.Join(m.projectRoot, ".cctask", "logs", procID+".log")
 	proc := model.ClaudeProcess{
-		ID:      procID,
-		Label:   label,
-		Status:  model.ProcessRunning,
-		Output:  "Waiting for claude...",
-		LogFile: logFile,
+		ID:               procID,
+		Label:            label,
+		Status:           model.ProcessRunning,
+		Output:           "Waiting for claude...",
+		IsInteractive:    true,
+		CompletionAction: model.CompletionSaveGroupPlan,
+		CompletionMeta:   map[string]string{"groupID": group.ID},
 	}
 	m.processes = append(m.processes, proc)
 
-
 	tasks := store.GetTasksForGroup(m.store, group.ID)
 	promptText := prompt.BuildGroupPlanGenerationPrompt(m.projectRoot, group, tasks)
-	groupID := group.ID
-	projectRoot := m.projectRoot
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnPlanCmd(m.program, projectRoot, procID, label, promptText)
-		innerCmd := cmd
-		cmd = func() tea.Msg {
-			result := innerCmd()
-			if done, ok := result.(claude.ProcessDoneMsg); ok && done.Err == nil {
-				filename := store.PlanFilenameForGroup(&model.Group{ID: groupID})
-				store.SavePlan(projectRoot, filename, done.Output)
-				s, _ := store.LoadStore(projectRoot)
-				if g := store.FindGroup(s, groupID); g != nil {
-					g.PlanFile = filename
-					store.SaveStore(projectRoot, s)
-				}
-			}
-			return result
-		}
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan")
 	} else {
+		projectRoot := m.projectRoot
+		groupID := group.ID
 		cmd = func() tea.Msg {
 			output, logFile, err := runClaudePipe(projectRoot, procID, promptText)
 			if err != nil {
@@ -1466,13 +1528,16 @@ func (m Model) executeCombinePlans(taskIDs []string, name string) (tea.Model, te
 	m.runningLabels[label] = true
 
 	procID := fmt.Sprintf("combine-%d", time.Now().Unix())
-	logFile := filepath.Join(m.projectRoot, ".cctask", "logs", procID+".log")
 	proc := model.ClaudeProcess{
-		ID:      procID,
-		Label:   label,
-		Status:  model.ProcessRunning,
-		Output:  "Waiting for claude...",
-		LogFile: logFile,
+		ID:               procID,
+		Label:            label,
+		Status:           model.ProcessRunning,
+		Output:           "Waiting for claude...",
+		CompletionAction: model.CompletionCombinePlans,
+		CompletionMeta: map[string]string{
+			"planName": name,
+			"taskIDs":  strings.Join(taskIDs, ","),
+		},
 	}
 	m.processes = append(m.processes, proc)
 
@@ -1486,27 +1551,19 @@ func (m Model) executeCombinePlans(taskIDs []string, name string) (tea.Model, te
 		}
 	}
 	promptText := prompt.BuildCombinePlansPrompt(m.projectRoot, tasks)
-	projectRoot := m.projectRoot
-	planName := name
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnPlanCmd(m.program, projectRoot, procID, label, promptText)
-		innerCmd := cmd
-		cmd = func() tea.Msg {
-			result := innerCmd()
-			if done, ok := result.(claude.ProcessDoneMsg); ok && done.Err == nil {
-				store.AddCombinedPlan(projectRoot, planName, taskIDs, done.Output)
-			}
-			return result
-		}
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan")
 	} else {
+		projectRoot := m.projectRoot
+		planName := name
 		cmd = func() tea.Msg {
 			output, logFile, err := runClaudePipe(projectRoot, procID, promptText)
 			if err != nil {
 				return claude.ProcessDoneMsg{ID: procID, LogFile: logFile, Err: err}
 			}
-			store.AddCombinedPlan(projectRoot, planName, taskIDs, output)
+			store.AddCombinedPlanWithTask(projectRoot, planName, taskIDs, output)
 			return claude.ProcessDoneMsg{ID: procID, Output: output, LogFile: logFile}
 		}
 	}
@@ -1525,41 +1582,36 @@ func (m Model) executeFollowUp(taskID, question string) (tea.Model, tea.Cmd) {
 	promptText := prompt.BuildPlanFollowUpPrompt(m.projectRoot, task, question)
 	label := "Ask: " + task.Title
 	procID := fmt.Sprintf("followup-%s-%d", taskID, time.Now().Unix())
-	logFile := filepath.Join(m.projectRoot, ".cctask", "logs", procID+".log")
+
+	planFile := task.PlanFile
+	if planFile == "" {
+		planFile = store.PlanFilenameForTask(task)
+	}
+
 	proc := model.ClaudeProcess{
-		ID:      procID,
-		Label:   label,
-		Status:  model.ProcessRunning,
-		Output:  "Waiting for claude...",
-		LogFile: logFile,
+		ID:               procID,
+		Label:            label,
+		Status:           model.ProcessRunning,
+		Output:           "Waiting for claude...",
+		IsInteractive:    true,
+		CompletionAction: model.CompletionSaveFollowUp,
+		CompletionMeta: map[string]string{
+			"taskID":      taskID,
+			"planFile":    planFile,
+			"hasPlanFile": fmt.Sprintf("%v", task.PlanFile != ""),
+		},
 	}
 	m.processes = append(m.processes, proc)
 
 	m.mode = model.ModeTaskView
 	m.action = actionNone
 
-	planFile := task.PlanFile
-	if planFile == "" {
-		planFile = store.PlanFilenameForTask(task)
-	}
-	projectRoot := m.projectRoot
-	hasPlanFile := task.PlanFile != ""
-
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnPlanCmd(m.program, projectRoot, procID, label, promptText)
-		innerCmd := cmd
-		cmd = func() tea.Msg {
-			result := innerCmd()
-			if done, ok := result.(claude.ProcessDoneMsg); ok && done.Err == nil {
-				store.SavePlan(projectRoot, planFile, done.Output)
-				if !hasPlanFile {
-					store.UpdateTask(projectRoot, taskID, map[string]interface{}{"planFile": planFile})
-				}
-			}
-			return result
-		}
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan")
 	} else {
+		projectRoot := m.projectRoot
+		hasPlanFile := task.PlanFile != ""
 		cmd = func() tea.Msg {
 			output, logFile, err := runClaudePipe(projectRoot, procID, promptText)
 			if err != nil {
@@ -1574,6 +1626,147 @@ func (m Model) executeFollowUp(taskID, question string) (tea.Model, tea.Cmd) {
 	}
 
 	return m, tea.Batch(cmd, flashCmd("Asking Claude..."))
+}
+
+// --- Streaming handlers ---
+
+func (m Model) handleStreamEvent(msg claude.StreamEventMsg) (tea.Model, tea.Cmd) {
+	for i := range m.processes {
+		if m.processes[i].ID == msg.ProcessID {
+			m.processes[i].Events = append(m.processes[i].Events, msg.Event)
+			if msg.SessionID != "" {
+				m.processes[i].SessionID = msg.SessionID
+			}
+			// Update legacy Output for sidebar preview
+			switch msg.Event.Kind {
+			case model.EventText:
+				// Clear initial placeholder on first text
+				if m.processes[i].Output == "Waiting for claude..." || m.processes[i].Output == "Processing tasks..." {
+					m.processes[i].Output = ""
+				}
+				m.processes[i].Output += msg.Event.Text
+			case model.EventToolUse:
+				m.processes[i].Output = "Running " + msg.Event.ToolName + "..."
+			}
+			break
+		}
+	}
+	return m, nil
+}
+
+func (m Model) handleStreamDone(msg claude.StreamDoneMsg) (tea.Model, tea.Cmd) {
+	for i := range m.processes {
+		if m.processes[i].ID != msg.ProcessID {
+			continue
+		}
+		proc := &m.processes[i]
+		if msg.SessionID != "" {
+			proc.SessionID = msg.SessionID
+		}
+		proc.TurnCount = msg.TurnCount
+		proc.CostUSD = msg.CostUSD
+		delete(m.runningLabels, proc.Label)
+
+		if msg.Err != nil {
+			proc.Status = model.ProcessError
+			proc.Output = "Error: " + msg.Err.Error()
+			proc.Events = append(proc.Events, model.StreamEvent{
+				Kind:    model.EventSystem,
+				Text:    "Error: " + msg.Err.Error(),
+				IsError: true,
+			})
+			break
+		}
+
+		// Run completion action
+		m.runCompletionAction(proc, msg.FinalText)
+
+		// Set status: interactive processes wait for follow-up, others are done
+		if proc.IsInteractive {
+			proc.Status = model.ProcessWaiting
+		} else {
+			proc.Status = model.ProcessDone
+		}
+		break
+	}
+	m.reload()
+
+	// Auto-remove non-interactive done processes after 5s
+	for _, proc := range m.processes {
+		if proc.ID == msg.ProcessID && !proc.IsInteractive && proc.Status == model.ProcessDone {
+			return m, tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+				return ProcessAutoRemoveMsg{ID: msg.ProcessID}
+			})
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) runCompletionAction(proc *model.ClaudeProcess, finalText string) {
+	projectRoot := m.projectRoot
+	meta := proc.CompletionMeta
+	if meta == nil {
+		meta = map[string]string{}
+	}
+
+	switch proc.CompletionAction {
+	case model.CompletionSavePlan:
+		taskID := meta["taskID"]
+		taskTitle := meta["taskTitle"]
+		filename := store.PlanFilenameForTask(&model.Task{ID: taskID, Title: taskTitle})
+		store.SavePlan(projectRoot, filename, finalText)
+		store.UpdateTask(projectRoot, taskID, map[string]interface{}{"planFile": filename})
+
+	case model.CompletionSaveGroupPlan:
+		groupID := meta["groupID"]
+		filename := store.PlanFilenameForGroup(&model.Group{ID: groupID})
+		store.SavePlan(projectRoot, filename, finalText)
+		s, _ := store.LoadStore(projectRoot)
+		if g := store.FindGroup(s, groupID); g != nil {
+			g.PlanFile = filename
+			store.SaveStore(projectRoot, s)
+		}
+
+	case model.CompletionApplyGroupAction:
+		applyGroupActionResult(projectRoot, finalText)
+
+	case model.CompletionCombinePlans:
+		planName := meta["planName"]
+		var taskIDs []string
+		for _, id := range strings.Split(meta["taskIDs"], ",") {
+			if id != "" {
+				taskIDs = append(taskIDs, id)
+			}
+		}
+		store.AddCombinedPlanWithTask(projectRoot, planName, taskIDs, finalText)
+
+	case model.CompletionSaveFollowUp:
+		taskID := meta["taskID"]
+		planFile := meta["planFile"]
+		store.SavePlan(projectRoot, planFile, finalText)
+		if meta["hasPlanFile"] != "true" {
+			store.UpdateTask(projectRoot, taskID, map[string]interface{}{"planFile": planFile})
+		}
+	}
+}
+
+func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
+	// Append user message event to the process
+	for i := range m.processes {
+		if m.processes[i].ID == msg.ProcessID {
+			m.processes[i].Events = append(m.processes[i].Events, model.StreamEvent{
+				Kind: model.EventUserMsg,
+				Text: msg.Message,
+			})
+			m.processes[i].Status = model.ProcessRunning
+			break
+		}
+	}
+
+	m.mode = model.ModeProcessDetail
+	m.scrollOffset = 999999 // Scroll to bottom
+
+	return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, msg.ProcessID, msg.SessionID, msg.Message)
 }
 
 func (m Model) handleProcessDone(msg claude.ProcessDoneMsg) (tea.Model, tea.Cmd) {

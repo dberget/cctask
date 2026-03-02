@@ -34,7 +34,7 @@ func renderAllTasksDetail(s *model.TaskStore, width int) string {
 	lines = append(lines, styleCyanBold.Render("All Tasks"))
 	lines = append(lines, "")
 
-	pending, inProgress, done := 0, 0, 0
+	pending, inProgress, done, merged := 0, 0, 0, 0
 	for _, t := range s.Tasks {
 		switch t.Status {
 		case model.StatusPending:
@@ -43,6 +43,8 @@ func renderAllTasksDetail(s *model.TaskStore, width int) string {
 			inProgress++
 		case model.StatusDone:
 			done++
+		case model.StatusMerged:
+			merged++
 		}
 	}
 
@@ -50,6 +52,9 @@ func renderAllTasksDetail(s *model.TaskStore, width int) string {
 	lines = append(lines, styleGray.Render(padRight("Pending:", 14))+fmt.Sprintf("%d", pending))
 	lines = append(lines, styleGray.Render(padRight("In Progress:", 14))+fmt.Sprintf("%d", inProgress))
 	lines = append(lines, styleGray.Render(padRight("Done:", 14))+fmt.Sprintf("%d", done))
+	if merged > 0 {
+		lines = append(lines, styleGray.Render(padRight("Merged:", 14))+fmt.Sprintf("%d", merged))
+	}
 	lines = append(lines, styleGray.Render(padRight("Projects:", 14))+fmt.Sprintf("%d", len(s.Groups)))
 
 	lines = append(lines, "")
@@ -89,6 +94,9 @@ func renderTaskDetail(task *model.Task, projectRoot string, width int) string {
 		lines = append(lines, styleGray.Render(padRight("Project:", 10))+task.Group)
 	}
 	lines = append(lines, styleGray.Render(padRight("Plan:", 10))+planStatus(hasPlan))
+	if task.MergedInto != "" {
+		lines = append(lines, styleGray.Render(padRight("Merged:", 10))+styleDim.Render("into "+task.MergedInto))
+	}
 
 	if task.Description != "" {
 		lines = append(lines, "")

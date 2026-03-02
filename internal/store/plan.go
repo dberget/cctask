@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/davidberget/cctask-go/internal/model"
 )
@@ -60,6 +61,92 @@ func AddCombinedPlan(projectRoot string, name string, sourceTaskIDs []string, co
 		return nil, err
 	}
 	return &plan, nil
+}
+
+func AddCombinedPlanWithTask(projectRoot string, name string, sourceTaskIDs []string, content string) (*model.Task, error) {
+	s, err := LoadStore(projectRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	// Save the combined plan file
+	id := fmt.Sprintf("cp%d", nowUnixMilli())
+	filename := fmt.Sprintf("combined-%s.md", Slugify(name))
+	if err := SavePlan(projectRoot, filename, content); err != nil {
+		return nil, err
+	}
+
+	// Record the combined plan entry
+	plan := model.CombinedPlan{
+		ID:            id,
+		Name:          name,
+		SourceTaskIDs: sourceTaskIDs,
+		PlanFile:      filename,
+		Created:       model.Now(),
+	}
+	s.CombinedPlans = append(s.CombinedPlans, plan)
+
+	// Determine common group and collect tags from source tasks
+	var descLines []string
+	tagSet := map[string]bool{}
+	commonGroup := ""
+	groupSet := false
+	for _, tid := range sourceTaskIDs {
+		t := FindTask(s, tid)
+		if t == nil {
+			continue
+		}
+		descLines = append(descLines, fmt.Sprintf("- %s: %s", t.ID, t.Title))
+		for _, tag := range t.Tags {
+			tagSet[tag] = true
+		}
+		if !groupSet {
+			commonGroup = t.Group
+			groupSet = true
+		} else if t.Group != commonGroup {
+			commonGroup = ""
+		}
+	}
+
+	var tags []string
+	for tag := range tagSet {
+		tags = append(tags, tag)
+	}
+	if tags == nil {
+		tags = []string{}
+	}
+
+	// Create the new task
+	now := model.Now()
+	taskID := GenerateTaskID(s)
+	newTask := model.Task{
+		ID:          taskID,
+		Title:       name,
+		Description: "Combined plan from:\n" + strings.Join(descLines, "\n"),
+		Status:      model.StatusPlanning,
+		Tags:        tags,
+		Group:       commonGroup,
+		PlanFile:    filename,
+		Created:     now,
+		Updated:     now,
+	}
+	s.Tasks = append(s.Tasks, newTask)
+
+	// Mark source tasks as merged
+	for _, tid := range sourceTaskIDs {
+		idx := findTaskIndex(s, tid)
+		if idx == -1 {
+			continue
+		}
+		s.Tasks[idx].Status = model.StatusMerged
+		s.Tasks[idx].MergedInto = taskID
+		s.Tasks[idx].Updated = now
+	}
+
+	if err := SaveStore(projectRoot, s); err != nil {
+		return nil, err
+	}
+	return &newTask, nil
 }
 
 func DeleteCombinedPlan(projectRoot string, id string) error {

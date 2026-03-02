@@ -151,9 +151,13 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 				nameWidth = 8
 			}
 
+			isMerged := task.Status == model.StatusMerged
 			nameColor := colorWhite
 			if isSelected {
 				nameColor = colorPrimary
+			}
+			if isMerged && !isSelected {
+				nameColor = colorDim
 			}
 
 			hasPlan := task.PlanFile != "" && store.PlanExists(projectRoot, task.PlanFile)
@@ -162,8 +166,13 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 				planMark = styleGreen.Render(" ✓")
 			}
 
+			idStyle := styleGray
+			if isMerged && !isSelected {
+				idStyle = styleDim
+			}
+
 			line := lipgloss.NewStyle().Foreground(nameColor).Render(indent) +
-				styleGray.Render(padRight(task.ID, 5)) +
+				idStyle.Render(padRight(task.ID, 5)) +
 				lipgloss.NewStyle().Foreground(nameColor).Render(truncate(task.Title, nameWidth)) +
 				"  " + statusIcon(string(task.Status)) +
 				planMark

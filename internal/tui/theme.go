@@ -69,6 +69,8 @@ func statusIcon(status string) string {
 		return styleCyan.Render("◉")
 	case "done":
 		return styleGreen.Render("✓")
+	case "merged":
+		return styleDim.Render("⊟")
 	default:
 		return styleDim.Render("○")
 	}
@@ -84,6 +86,8 @@ func statusLabel(status string) string {
 		return styleCyan.Render("in-progress")
 	case "done":
 		return styleGreen.Render("done")
+	case "merged":
+		return styleDim.Render("merged")
 	default:
 		return status
 	}
@@ -97,6 +101,8 @@ func processStatusSymbol(status string) string {
 		return styleGreen.Render("✓")
 	case "error":
 		return styleRed.Render("✗")
+	case "waiting":
+		return styleMagenta.Render("⏳")
 	default:
 		return styleDim.Render("○")
 	}
@@ -110,6 +116,8 @@ func processStatusColor(status string) lipgloss.Color {
 		return colorSuccess
 	case "error":
 		return colorError
+	case "waiting":
+		return colorMagenta
 	default:
 		return colorSecondary
 	}

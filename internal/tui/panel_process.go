@@ -37,9 +37,15 @@ func renderProcessPanel(processes []model.ClaudeProcess, selectedIndex int, isFo
 			nameColor = colorPrimary
 		}
 
+		sessionTag := ""
+		if proc.SessionID != "" {
+			sessionTag = styleDim.Render(" ↻")
+		}
+
 		line := lipgloss.NewStyle().Foreground(nameColor).Render(indicator) +
 			processStatusSymbol(string(proc.Status)) + " " +
-			lipgloss.NewStyle().Bold(isSelected).Foreground(nameColor).Render(truncate(proc.Label, 22))
+			lipgloss.NewStyle().Bold(isSelected).Foreground(nameColor).Render(truncate(proc.Label, 20)) +
+			sessionTag
 		lines = append(lines, line)
 
 		outputLine := "    " + styleGray.Render(lastLine(proc.Output))

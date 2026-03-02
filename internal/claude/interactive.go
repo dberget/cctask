@@ -37,10 +37,15 @@ func ExecInteractive(projectRoot string, systemPrompt string) tea.Cmd {
 	})
 }
 
-// ExecContinue returns a tea.Cmd that hands off the terminal to claude --continue,
-// resuming the most recent conversation in the project directory.
-func ExecContinue(projectRoot string) tea.Cmd {
-	c := exec.Command("claude", "--continue")
+// ExecContinue returns a tea.Cmd that hands off the terminal to claude,
+// resuming a specific session if provided, or the most recent conversation otherwise.
+func ExecContinue(projectRoot string, sessionID string) tea.Cmd {
+	var c *exec.Cmd
+	if sessionID != "" {
+		c = exec.Command("claude", "--resume", sessionID)
+	} else {
+		c = exec.Command("claude", "--continue")
+	}
 	c.Dir = projectRoot
 	return tea.ExecProcess(c, func(err error) tea.Msg {
 		return ClaudeExitMsg{Err: err}
