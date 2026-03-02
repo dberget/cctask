@@ -144,6 +144,24 @@ end tell`, app, launchPath)
 	exec.Command("osascript", "-e", script).Run()
 }
 
+// spawnGhosttyWindow opens a new window in the running Ghostty instance via AppleScript
+// menu automation, then types the launch command. Ghostty lacks AppleScript `do script`
+// support and `open -na` spawns a duplicate process, so this is the best available approach.
+func spawnGhosttyWindow(launchPath string) {
+	script := fmt.Sprintf(
+		`tell application "Ghostty" to activate
+delay 0.3
+tell application "System Events"
+	tell process "Ghostty"
+		click menu item "New Window" of menu "File" of menu bar 1
+		delay 0.5
+		keystroke "%s"
+		keystroke return
+	end tell
+end tell`, launchPath)
+	exec.Command("osascript", "-e", script).Run()
+}
+
 // spawnCLI launches a terminal via its CLI binary with the given args.
 // Runs in the background so it doesn't block the TUI.
 func spawnCLI(binary string, args ...string) {
@@ -185,11 +203,7 @@ func SpawnInTerminal(projectRoot string, systemPrompt string) tea.Cmd {
 		case termITerm2:
 			spawnAppleScriptITerm2(launchPath)
 		case termGhostty:
-			if bin, ok := findBinary("ghostty"); ok {
-				spawnCLI(bin, "-e", "bash", launchPath)
-			} else {
-				spawnAppleScriptTerminal(launchPath)
-			}
+			spawnGhosttyWindow(launchPath)
 		case termAlacritty:
 			if bin, ok := findBinary("alacritty"); ok {
 				spawnCLI(bin, "-e", "bash", launchPath)
