@@ -10,7 +10,7 @@ func keyHint(key, label string) string {
 	return styleCyanBold.Render(key) + " " + styleDim.Render(label)
 }
 
-func renderStatusBar(mode model.ViewMode, message string, cols int) string {
+func renderStatusBar(mode model.ViewMode, selected *model.ListItem, message string, cols int) string {
 	lineWidth := cols - 4
 	if lineWidth < 40 {
 		lineWidth = 40
@@ -19,13 +19,7 @@ func renderStatusBar(mode model.ViewMode, message string, cols int) string {
 	var hints []string
 	switch mode {
 	case model.ModeList:
-		hints = []string{
-			keyHint("a", "add"), keyHint("e", "edit"), keyHint("d", "delete"),
-			keyHint("g", "project"), keyHint("r", "run"), keyHint("p", "plan"),
-			keyHint("s", "status"), keyHint("c", "prompt"), keyHint("/", "filter"),
-			keyHint("v", "view"), keyHint("m", "merge"), keyHint("t", "theme"),
-			keyHint("Enter", "detail"), keyHint("?", "help"), keyHint("q", "quit"),
-		}
+		hints = listHints(selected)
 	case model.ModeDetail:
 		hints = []string{
 			keyHint("e", "edit desc"), keyHint("r", "run"), keyHint("p", "plan"),
@@ -83,6 +77,47 @@ func renderStatusBar(mode model.ViewMode, message string, cols int) string {
 	}
 
 	return horizontalLine(lineWidth) + "\n" + hintLine
+}
+
+func listHints(sel *model.ListItem) []string {
+	isTask := sel != nil && sel.Kind == model.ListItemTask
+	isGroup := sel != nil && sel.Kind == model.ListItemProject
+	hasSelection := isTask || isGroup
+
+	var h []string
+	h = append(h, keyHint("a", "add"))
+	if hasSelection {
+		h = append(h, keyHint("e", "edit"))
+		h = append(h, keyHint("d", "delete"))
+	}
+	if isTask {
+		h = append(h, keyHint("g", "project"))
+	} else if isGroup {
+		h = append(h, keyHint("g", "subgroup"))
+	} else {
+		h = append(h, keyHint("g", "project"))
+	}
+	if hasSelection {
+		h = append(h, keyHint("r", "run"))
+		h = append(h, keyHint("p", "plan"))
+	}
+	if isTask {
+		h = append(h, keyHint("s", "status"))
+	}
+	h = append(h, keyHint("c", "prompt"))
+	h = append(h, keyHint("/", "filter"))
+	if isGroup && sel.Project != nil && sel.Project.PlanFile != "" {
+		h = append(h, keyHint("v", "view plan"))
+	}
+	h = append(h, keyHint("m", "merge"))
+	if hasSelection {
+		h = append(h, keyHint("Enter", "detail"))
+	}
+	if isGroup {
+		h = append(h, keyHint("Space", "collapse"))
+	}
+	h = append(h, keyHint("?", "help"), keyHint("q", "quit"))
+	return h
 }
 
 func renderHelp() string {

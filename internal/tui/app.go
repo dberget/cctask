@@ -240,7 +240,7 @@ func (m Model) View() string {
 	}
 
 	header := m.renderHeader(projectName)
-	statusBar := renderStatusBar(m.mode, m.message, m.width)
+	statusBar := renderStatusBar(m.mode, m.selectedItem, m.message, m.width)
 	statusRendered := lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(statusBar)
 
 	// Measure actual rendered heights to calculate available content space
@@ -598,7 +598,9 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key == "enter" && (m.mode == model.ModeList || m.mode == model.ModeDetail) {
 		if m.focusPanel == model.FocusMain {
 			if m.selectedTask() != nil {
-				m.mode = model.ModeDetail
+				m.scrollOffset = 0
+				m.mode = model.ModeTaskView
+				return m, nil
 			} else if m.selectedGroup() != nil {
 				m.scrollOffset = 0
 				m.mode = model.ModeGroupDetail
@@ -610,10 +612,17 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if key == "v" && (m.mode == model.ModeList || m.mode == model.ModeDetail) && m.selectedTask() != nil {
-		m.scrollOffset = 0
-		m.mode = model.ModeTaskView
-		return m, nil
+	if key == "v" && (m.mode == model.ModeList || m.mode == model.ModeDetail) {
+		if m.selectedTask() != nil {
+			m.scrollOffset = 0
+			m.mode = model.ModeTaskView
+			return m, nil
+		}
+		if g := m.selectedGroup(); g != nil && g.PlanFile != "" {
+			m.scrollOffset = 0
+			m.mode = model.ModePlan
+			return m, nil
+		}
 	}
 
 	if key == "c" && m.mode == model.ModeTaskView && m.selectedTask() != nil {
