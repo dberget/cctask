@@ -17,12 +17,25 @@ cctask ~/my-project  [4 tasks, 2 projects]
     t5  Fix CI pipeline  ●     │  Implement login flow...
 ```
 
-## Install
+## Download
+
+Pre-built binaries are available on the [releases page](https://github.com/davidberget/cctask-go/releases).
+
+```bash
+# macOS Apple Silicon (M1/M2/M3/M4)
+curl -L https://github.com/davidberget/cctask-go/releases/latest/download/cctask-darwin-arm64 -o /usr/local/bin/cctask && chmod +x /usr/local/bin/cctask
+
+# macOS Intel
+curl -L https://github.com/davidberget/cctask-go/releases/latest/download/cctask-darwin-amd64 -o /usr/local/bin/cctask && chmod +x /usr/local/bin/cctask
+```
+
+Requires [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI (`claude` command must be on PATH).
+
+## Install from source
 
 Requires [Go 1.25+](https://go.dev/dl/) and [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
 ```bash
-# Clone and install
 git clone https://github.com/davidberget/cctask-go.git
 cd cctask-go
 make install

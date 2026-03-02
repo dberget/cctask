@@ -240,15 +240,17 @@ func (m Model) View() string {
 
 	header := m.renderHeader(projectName)
 	statusBar := renderStatusBar(m.mode, m.message, m.width)
-	content := m.renderContent()
+	statusRendered := lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(statusBar)
 
-	// Measure header and status bar to calculate available content height
-	headerLines := strings.Count(header, "\n") + 1
-	statusLines := strings.Count(statusBar, "\n") + 2 // +1 for PaddingBottom
-	maxContentLines := m.height - headerLines - statusLines
+	// Measure actual rendered heights to calculate available content space
+	headerHeight := len(strings.Split(header, "\n"))
+	statusHeight := len(strings.Split(statusRendered, "\n"))
+	maxContentLines := m.height - headerHeight - statusHeight
 	if maxContentLines < 5 {
 		maxContentLines = 5
 	}
+
+	content := m.renderContent()
 
 	// Clip content to fit available space
 	contentLines := strings.Split(content, "\n")
@@ -260,8 +262,16 @@ func (m Model) View() string {
 	page := lipgloss.JoinVertical(lipgloss.Left,
 		header,
 		lipgloss.NewStyle().PaddingLeft(2).PaddingRight(2).Render(content),
-		lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(statusBar),
+		statusRendered,
 	)
+
+	// Safety: ensure output never exceeds terminal height
+	pageLines := strings.Split(page, "\n")
+	if len(pageLines) > m.height {
+		pageLines = pageLines[:m.height]
+		page = strings.Join(pageLines, "\n")
+	}
+
 	return page
 }
 
