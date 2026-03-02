@@ -55,7 +55,7 @@ func renderProcessPanel(processes []model.ClaudeProcess, selectedIndex int, isFo
 
 	if isFocused {
 		lines = append(lines, styleGray.Render("Enter: full view"))
-		lines = append(lines, styleGray.Render("o: continue in claude"))
+		lines = append(lines, styleGray.Render("x: cancel  o: claude"))
 	}
 
 	content := strings.Join(lines, "\n")

@@ -243,6 +243,25 @@ func DeleteTask(projectRoot string, id string) error {
 		pf := filepath.Join(PlansDir(projectRoot), task.PlanFile)
 		os.Remove(pf)
 	}
+
+	// Revert any tasks that were merged into this one
+	now := model.Now()
+	for i := range s.Tasks {
+		if s.Tasks[i].MergedInto == id {
+			s.Tasks[i].Status = model.StatusPending
+			s.Tasks[i].MergedInto = ""
+			s.Tasks[i].Updated = now
+		}
+	}
+
+	// Clean up associated combined plan entry
+	for i, cp := range s.CombinedPlans {
+		if cp.PlanFile == task.PlanFile {
+			s.CombinedPlans = append(s.CombinedPlans[:i], s.CombinedPlans[i+1:]...)
+			break
+		}
+	}
+
 	s.Tasks = append(s.Tasks[:idx], s.Tasks[idx+1:]...)
 	return SaveStore(projectRoot, s)
 }

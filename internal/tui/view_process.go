@@ -74,10 +74,15 @@ func renderRichProcessDetail(proc *model.ClaudeProcess, width int) string {
 	// Footer hints
 	lines = append(lines, "")
 	var hints []string
+	if proc.Status == model.ProcessRunning {
+		hints = append(hints, keyHint("x", "cancel"))
+	}
 	if proc.Status == model.ProcessWaiting && proc.SessionID != "" {
 		hints = append(hints, keyHint("c", "follow-up"))
 	}
-	hints = append(hints, keyHint("o", "full claude"))
+	if proc.Status != model.ProcessRunning {
+		hints = append(hints, keyHint("o", "full claude"))
+	}
 	hints = append(hints, keyHint("Esc", "back"))
 	lines = append(lines, strings.Join(hints, "  "))
 
