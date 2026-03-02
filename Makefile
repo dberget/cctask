@@ -1,5 +1,5 @@
 BINARY := cctask
-GOBIN := /opt/homebrew/bin/go
+GOBIN := $(shell which go)
 
 .PHONY: build test install clean vet
 
