@@ -9,6 +9,14 @@ import (
 	"github.com/davidberget/cctask-go/internal/store"
 )
 
+func prependContext(projectRoot string, prompt string) string {
+	ctx := store.LoadContext(projectRoot)
+	if ctx == "" {
+		return prompt
+	}
+	return "# Project Context\n" + ctx + "\n\n---\n\n" + prompt
+}
+
 func BuildTaskPrompt(projectRoot string, task *model.Task) string {
 	var parts []string
 	parts = append(parts, fmt.Sprintf("# Task: %s", task.Title))
@@ -25,7 +33,7 @@ func BuildTaskPrompt(projectRoot string, task *model.Task) string {
 			parts = append(parts, fmt.Sprintf("\n## Implementation Plan\n%s", plan))
 		}
 	}
-	return strings.Join(parts, "\n")
+	return prependContext(projectRoot, strings.Join(parts, "\n"))
 }
 
 func BuildGroupPrompt(projectRoot string, group *model.Group, s *model.TaskStore) string {
@@ -129,10 +137,10 @@ func BuildGroupPrompt(projectRoot string, group *model.Group, s *model.TaskStore
 	parts = append(parts, "- Group plans: `<group-id>.md` (e.g. `my-group.md`)")
 	parts = append(parts, "- Set the task/group \"planFile\" field to the filename after creating a plan file")
 
-	return strings.Join(parts, "\n")
+	return prependContext(projectRoot, strings.Join(parts, "\n"))
 }
 
-func BuildPlanGenerationPrompt(task *model.Task) string {
+func BuildPlanGenerationPrompt(projectRoot string, task *model.Task) string {
 	var lines []string
 	lines = append(lines, "Create a detailed implementation plan for the following task.")
 	lines = append(lines, "Output ONLY the plan as markdown, no preamble.")
@@ -150,14 +158,14 @@ func BuildPlanGenerationPrompt(task *model.Task) string {
 	lines = append(lines, "- Key files to create or modify")
 	lines = append(lines, "- Important considerations or edge cases")
 	lines = append(lines, "- Testing approach")
-	return strings.Join(lines, "\n")
+	return prependContext(projectRoot, strings.Join(lines, "\n"))
 }
 
-func BuildGroupPlanGenerationPrompt(group *model.Group, tasks []model.Task) string {
-	return BuildGroupPlanGenerationPromptWithStore(group, tasks, nil)
+func BuildGroupPlanGenerationPrompt(projectRoot string, group *model.Group, tasks []model.Task) string {
+	return BuildGroupPlanGenerationPromptWithStore(projectRoot, group, tasks, nil)
 }
 
-func BuildGroupPlanGenerationPromptWithStore(group *model.Group, tasks []model.Task, s *model.TaskStore) string {
+func BuildGroupPlanGenerationPromptWithStore(projectRoot string, group *model.Group, tasks []model.Task, s *model.TaskStore) string {
 	var taskList []string
 	for _, t := range tasks {
 		desc := ""
@@ -199,7 +207,7 @@ func BuildGroupPlanGenerationPromptWithStore(group *model.Group, tasks []model.T
 	lines = append(lines, "- Key files to create or modify")
 	lines = append(lines, "- Important considerations or edge cases")
 	lines = append(lines, "- Testing approach")
-	return strings.Join(lines, "\n")
+	return prependContext(projectRoot, strings.Join(lines, "\n"))
 }
 
 func BuildCombinePlansPrompt(projectRoot string, tasks []model.Task) string {
@@ -232,7 +240,7 @@ func BuildCombinePlansPrompt(projectRoot string, tasks []model.Task) string {
 	lines = append(lines, "## Individual Plans")
 	lines = append(lines, "")
 	lines = append(lines, strings.Join(planSections, "\n\n---\n\n"))
-	return strings.Join(lines, "\n")
+	return prependContext(projectRoot, strings.Join(lines, "\n"))
 }
 
 func BuildPlanFollowUpPrompt(projectRoot string, task *model.Task, question string) string {
@@ -260,7 +268,7 @@ func BuildPlanFollowUpPrompt(projectRoot string, task *model.Task, question stri
 	parts = append(parts, question)
 	parts = append(parts, "")
 	parts = append(parts, "Please provide an updated plan that addresses this question. If the question requires changes to the plan, incorporate them. If it's a clarification, add the answer as a note in the relevant section.")
-	return strings.Join(parts, "\n")
+	return prependContext(projectRoot, strings.Join(parts, "\n"))
 }
 
 // taskJSON is a simplified task struct for JSON serialization in group action prompts.
@@ -281,7 +289,7 @@ type groupJSON struct {
 	ParentGroup string `json:"parentGroup"`
 }
 
-func BuildGroupActionPrompt(tasks []model.Task, groups []model.Group, scopeLabel string, instruction string) string {
+func BuildGroupActionPrompt(projectRoot string, tasks []model.Task, groups []model.Group, scopeLabel string, instruction string) string {
 	var tj []taskJSON
 	for _, t := range tasks {
 		tags := t.Tags
@@ -345,5 +353,5 @@ func BuildGroupActionPrompt(tasks []model.Task, groups []model.Group, scopeLabel
 	lines = append(lines, "- If no new groups are needed, use an empty array for newGroups")
 	lines = append(lines, "- If no group hierarchy changes are needed, use an empty array for updatedGroups")
 	lines = append(lines, "- Do not remove or add tasks — only modify existing ones")
-	return strings.Join(lines, "\n")
+	return prependContext(projectRoot, strings.Join(lines, "\n"))
 }
