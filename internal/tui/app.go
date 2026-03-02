@@ -150,6 +150,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.form.Width = msg.Width
 		if m.mode == model.ModeEditPlan {
 			m.editor.VH = msg.Height - 10
 			m.editor.VW = msg.Width - 12
@@ -636,7 +637,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if key == "a" && m.mode == model.ModeList {
 		m.action = actionAddTask
-		m.form = NewForm("New Task", nil)
+		m.form = NewForm("New Task", nil, m.width)
 		m.mode = model.ModeTaskForm
 		return m, nil
 	}
@@ -924,7 +925,7 @@ func (m Model) handleEdit() (tea.Model, tea.Cmd) {
 				Description: t.Description,
 				Tags:        strings.Join(t.Tags, ", "),
 			}
-			m.form = NewForm(fmt.Sprintf("Edit Task — %s", t.ID), initial)
+			m.form = NewForm(fmt.Sprintf("Edit Task — %s", t.ID), initial, m.width)
 			m.mode = model.ModeTaskForm
 		}
 		return m, nil
