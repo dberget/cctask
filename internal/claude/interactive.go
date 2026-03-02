@@ -14,6 +14,19 @@ type ClaudeExitMsg struct {
 	Err error
 }
 
+type terminalApp string
+
+const (
+	termTerminal  terminalApp = "Terminal"
+	termITerm2    terminalApp = "iTerm2"
+	termGhostty   terminalApp = "Ghostty"
+	termAlacritty terminalApp = "Alacritty"
+	termKitty     terminalApp = "kitty"
+	termWezTerm   terminalApp = "WezTerm"
+	termWarp      terminalApp = "Warp"
+	termUnknown   terminalApp = ""
+)
+
 // ExecInteractive returns a tea.Cmd that hands off the terminal to an interactive claude process.
 // Bubbletea suspends, gives terminal to claude, resumes on exit.
 func ExecInteractive(projectRoot string, systemPrompt string) tea.Cmd {
@@ -34,22 +47,106 @@ func ExecContinue(projectRoot string) tea.Cmd {
 	})
 }
 
-// detectTerminalApp returns the name of the frontmost terminal application.
-// Falls back to "Terminal" if detection fails.
-func detectTerminalApp() string {
-	// Ask macOS which app is frontmost — since cctask is running in a terminal,
-	// the frontmost app is the user's terminal emulator.
+// detectTerminalApp identifies the user's terminal emulator.
+// Checks $TERM_PROGRAM first (most reliable), then kitty-specific env var,
+// then falls back to osascript frontmost-app query.
+func detectTerminalApp() terminalApp {
+	// 1. Check $TERM_PROGRAM (set by most modern terminals)
+	if tp := os.Getenv("TERM_PROGRAM"); tp != "" {
+		switch strings.ToLower(tp) {
+		case "apple_terminal":
+			return termTerminal
+		case "iterm.app":
+			return termITerm2
+		case "ghostty":
+			return termGhostty
+		case "alacritty":
+			return termAlacritty
+		case "wezterm":
+			return termWezTerm
+		case "warp":
+			return termWarp
+		}
+	}
+
+	// 2. Check kitty-specific env var (kitty sometimes sets TERM_PROGRAM=xterm-kitty)
+	if os.Getenv("KITTY_WINDOW_ID") != "" {
+		return termKitty
+	}
+
+	// 3. Fall back to osascript frontmost-app query (macOS only)
 	out, err := exec.Command("osascript", "-e",
 		`tell application "System Events" to get name of first application process whose frontmost is true`).Output()
 	if err == nil {
 		name := strings.TrimSpace(string(out))
-		// Validate it's a known terminal app
 		switch name {
-		case "iTerm2", "Terminal", "Alacritty", "kitty", "Hyper", "WezTerm", "Warp":
-			return name
+		case "Terminal":
+			return termTerminal
+		case "iTerm2":
+			return termITerm2
+		case "Ghostty":
+			return termGhostty
+		case "Alacritty":
+			return termAlacritty
+		case "kitty":
+			return termKitty
+		case "WezTerm":
+			return termWezTerm
+		case "Warp":
+			return termWarp
 		}
 	}
-	return "Terminal"
+
+	return termUnknown
+}
+
+// findBinary checks if a terminal binary is available on PATH.
+func findBinary(name string) (string, bool) {
+	path, err := exec.LookPath(name)
+	return path, err == nil
+}
+
+// spawnAppleScriptTerminal opens a new Terminal.app window via AppleScript.
+func spawnAppleScriptTerminal(launchPath string) {
+	script := fmt.Sprintf(
+		`tell application "Terminal"
+	activate
+	do script "%s"
+end tell`, launchPath)
+	exec.Command("osascript", "-e", script).Run()
+}
+
+// spawnAppleScriptITerm2 opens a new iTerm2 window via its AppleScript API.
+func spawnAppleScriptITerm2(launchPath string) {
+	script := fmt.Sprintf(
+		`tell application "iTerm2"
+	activate
+	create window with default profile
+	tell current session of current window
+		write text "%s"
+	end tell
+end tell`, launchPath)
+	exec.Command("osascript", "-e", script).Run()
+}
+
+// spawnAppleScriptGeneric opens a new window via AppleScript do script for apps that support it.
+func spawnAppleScriptGeneric(app string, launchPath string) {
+	script := fmt.Sprintf(
+		`tell application "%s"
+	activate
+	do script "%s"
+end tell`, app, launchPath)
+	exec.Command("osascript", "-e", script).Run()
+}
+
+// spawnCLI launches a terminal via its CLI binary with the given args.
+// Runs in the background so it doesn't block the TUI.
+func spawnCLI(binary string, args ...string) {
+	cmd := exec.Command(binary, args...)
+	if err := cmd.Start(); err != nil {
+		return
+	}
+	go cmd.Wait()
 }
 
 // SpawnInTerminal opens a new window in the user's active terminal app with an
@@ -76,29 +173,45 @@ func SpawnInTerminal(projectRoot string, systemPrompt string) tea.Cmd {
 		launchFile.Close()
 		os.Chmod(launchFile.Name(), 0o755)
 
-		termApp := detectTerminalApp()
+		term := detectTerminalApp()
 		launchPath := launchFile.Name()
 
-		var script string
-		switch termApp {
-		case "iTerm2":
-			script = fmt.Sprintf(
-				`tell application "iTerm2"
-	activate
-	create window with default profile
-	tell current session of current window
-		write text "%s"
-	end tell
-end tell`, launchPath)
+		switch term {
+		case termITerm2:
+			spawnAppleScriptITerm2(launchPath)
+		case termGhostty:
+			if bin, ok := findBinary("ghostty"); ok {
+				spawnCLI(bin, "-e", "bash", launchPath)
+			} else {
+				spawnAppleScriptTerminal(launchPath)
+			}
+		case termAlacritty:
+			if bin, ok := findBinary("alacritty"); ok {
+				spawnCLI(bin, "-e", "bash", launchPath)
+			} else {
+				spawnAppleScriptTerminal(launchPath)
+			}
+		case termKitty:
+			if bin, ok := findBinary("kitty"); ok {
+				spawnCLI(bin, "bash", launchPath)
+			} else {
+				spawnAppleScriptTerminal(launchPath)
+			}
+		case termWezTerm:
+			if bin, ok := findBinary("wezterm"); ok {
+				spawnCLI(bin, "start", "--", "bash", launchPath)
+			} else {
+				spawnAppleScriptTerminal(launchPath)
+			}
+		case termWarp:
+			spawnAppleScriptGeneric("Warp", launchPath)
+		case termTerminal:
+			spawnAppleScriptTerminal(launchPath)
 		default:
-			script = fmt.Sprintf(
-				`tell application "%s"
-	activate
-	do script "%s"
-end tell`, termApp, launchPath)
+			// Unknown terminal — fall back to Terminal.app
+			spawnAppleScriptTerminal(launchPath)
 		}
 
-		exec.Command("osascript", "-e", script).Run()
 		return nil
 	}
 }
