@@ -76,6 +76,9 @@ func BuildGroupPrompt(projectRoot string, group *model.Group, s *model.TaskStore
 	for _, task := range tasks {
 		parts = append(parts, fmt.Sprintf("\n### %s: %s", task.ID, task.Title))
 		parts = append(parts, fmt.Sprintf("Status: %s", task.Status))
+		if len(task.Tags) > 0 {
+			parts = append(parts, fmt.Sprintf("Tags: %s", strings.Join(task.Tags, ", ")))
+		}
 		if task.Description != "" {
 			parts = append(parts, task.Description)
 		}
@@ -173,7 +176,11 @@ func BuildGroupPlanGenerationPromptWithStore(projectRoot string, group *model.Gr
 		if t.Description != "" {
 			desc = " — " + t.Description
 		}
-		taskList = append(taskList, fmt.Sprintf("- %s: %s%s", t.ID, t.Title, desc))
+		tags := ""
+		if len(t.Tags) > 0 {
+			tags = " [" + strings.Join(t.Tags, ", ") + "]"
+		}
+		taskList = append(taskList, fmt.Sprintf("- %s: %s%s%s", t.ID, t.Title, tags, desc))
 	}
 
 	var lines []string
@@ -225,7 +232,11 @@ func BuildCombinePlansPrompt(projectRoot string, tasks []model.Task) string {
 		if t.Description != "" {
 			desc = t.Description + "\n"
 		}
-		planSections = append(planSections, fmt.Sprintf("### %s: %s\n%s%s", t.ID, t.Title, desc, plan))
+		tags := ""
+		if len(t.Tags) > 0 {
+			tags = "Tags: " + strings.Join(t.Tags, ", ") + "\n"
+		}
+		planSections = append(planSections, fmt.Sprintf("### %s: %s\n%s%s%s", t.ID, t.Title, tags, desc, plan))
 	}
 
 	var lines []string

@@ -4,12 +4,38 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/davidberget/cctask-go/internal/model"
 	claudecode "github.com/severity1/claude-agent-sdk-go"
 )
+
+// ProcessCancels is a registry of cancel functions for running processes.
+type ProcessCancels struct {
+	m sync.Map
+}
+
+// Register stores a cancel function for the given process ID.
+func (pc *ProcessCancels) Register(procID string, cancel context.CancelFunc) {
+	pc.m.Store(procID, cancel)
+}
+
+// Cancel cancels the process with the given ID and removes it from the registry.
+// Returns true if the process was found and cancelled.
+func (pc *ProcessCancels) Cancel(procID string) bool {
+	if v, ok := pc.m.LoadAndDelete(procID); ok {
+		v.(context.CancelFunc)()
+		return true
+	}
+	return false
+}
+
+// Remove removes a process from the registry without cancelling it.
+func (pc *ProcessCancels) Remove(procID string) {
+	pc.m.Delete(procID)
+}
 
 // StreamEventMsg delivers a single structured event to the TUI.
 type StreamEventMsg struct {
@@ -37,22 +63,28 @@ type ChatSubmitMsg struct {
 
 // SpawnStreamCmd creates a tea.Cmd that runs a Claude query using the SDK,
 // streaming structured events via p.Send() and returning StreamDoneMsg on completion.
-func SpawnStreamCmd(p *tea.Program, projectRoot string, procID string, prompt string, permissionMode string) tea.Cmd {
+func SpawnStreamCmd(p *tea.Program, projectRoot string, procID string, prompt string, permissionMode string, cancels *ProcessCancels) tea.Cmd {
 	return func() tea.Msg {
-		return runStream(p, projectRoot, procID, prompt, "", permissionMode)
+		return runStream(p, projectRoot, procID, prompt, "", permissionMode, cancels)
 	}
 }
 
 // SpawnStreamResumeCmd creates a tea.Cmd that resumes an existing Claude session.
-func SpawnStreamResumeCmd(p *tea.Program, projectRoot string, procID string, sessionID string, prompt string) tea.Cmd {
+func SpawnStreamResumeCmd(p *tea.Program, projectRoot string, procID string, sessionID string, prompt string, cancels *ProcessCancels) tea.Cmd {
 	return func() tea.Msg {
-		return runStream(p, projectRoot, procID, prompt, sessionID, "")
+		return runStream(p, projectRoot, procID, prompt, sessionID, "", cancels)
 	}
 }
 
-func runStream(p *tea.Program, projectRoot string, procID string, prompt string, sessionID string, permissionMode string) tea.Msg {
+func runStream(p *tea.Program, projectRoot string, procID string, prompt string, sessionID string, permissionMode string, cancels *ProcessCancels) tea.Msg {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+
+	// Register so the TUI can cancel this process
+	if cancels != nil {
+		cancels.Register(procID, cancel)
+		defer cancels.Remove(procID)
+	}
 
 	var allText strings.Builder
 	var finalSessionID string

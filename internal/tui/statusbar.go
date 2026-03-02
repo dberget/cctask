@@ -45,7 +45,7 @@ func renderStatusBar(mode model.ViewMode, selected *model.ListItem, message stri
 			keyHint("Esc", "cancel"),
 		}
 	case model.ModeProcessDetail:
-		hints = []string{keyHint("c", "chat"), keyHint("o", "full claude"), keyHint("Esc", "back")}
+		hints = []string{keyHint("x", "cancel"), keyHint("c", "chat"), keyHint("o", "full claude"), keyHint("Esc", "back")}
 	case model.ModeProcessChat:
 		hints = []string{keyHint("Enter", "send"), keyHint("Esc", "cancel")}
 	case model.ModeEditPlan, model.ModeEditContext:
@@ -168,6 +168,12 @@ func renderHelp() string {
 	lines = append(lines, k("p", "Plan"))
 	lines = append(lines, k("c", "Ask Claude"))
 	lines = append(lines, k("s", "Cycle status"))
+	lines = append(lines, "")
+
+	lines = append(lines, h("Process Detail"))
+	lines = append(lines, k("x", "Cancel running process"))
+	lines = append(lines, k("c", "Follow-up chat"))
+	lines = append(lines, k("o", "Open in full Claude"))
 	lines = append(lines, "")
 
 	lines = append(lines, h("Context View"))

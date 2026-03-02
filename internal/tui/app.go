@@ -73,8 +73,9 @@ type Model struct {
 	returnMode       model.ViewMode // mode to return to on cancel
 
 	// Processes
-	processes     []model.ClaudeProcess
-	runningLabels map[string]bool
+	processes      []model.ClaudeProcess
+	runningLabels  map[string]bool
+	processCancels *claude.ProcessCancels
 
 	// Combine flow state
 	combineSelectedIDs []string
@@ -114,11 +115,12 @@ func NewModel(projectRoot string) Model {
 	}
 
 	m := Model{
-		projectRoot:     projectRoot,
-		store:           s,
-		mode:            model.ModeList,
+		projectRoot:    projectRoot,
+		store:          s,
+		mode:           model.ModeList,
 		collapsedGroups: make(map[string]bool),
 		runningLabels:   make(map[string]bool),
+		processCancels:  &claude.ProcessCancels{},
 		width:           80,
 		height:          24,
 	}
@@ -663,6 +665,19 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.textInput = NewTextInput("Question for Claude", "")
 		m.mode = model.ModeTaskViewAsk
 		return m, nil
+	}
+
+	if key == "x" && m.processIdx < len(m.processes) {
+		if m.focusPanel == model.FocusProcesses || m.mode == model.ModeProcessDetail {
+			proc := &m.processes[m.processIdx]
+			if proc.Status == model.ProcessRunning {
+				if m.processCancels.Cancel(proc.ID) {
+					return m, flashCmd("Cancelling " + proc.Label + "...")
+				}
+				return m, flashCmd("Could not cancel process")
+			}
+			return m, flashCmd("Process is not running")
+		}
 	}
 
 	if key == "o" && m.processIdx < len(m.processes) {
@@ -1323,7 +1338,7 @@ func (m Model) spawnGroupAction(scopeGroupID string, instruction string) (tea.Mo
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan")
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels)
 	} else {
 		projectRoot := m.projectRoot
 		cmd = func() tea.Msg {
@@ -1453,7 +1468,7 @@ func (m Model) spawnPlanGeneration(task *model.Task) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan")
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels)
 	} else {
 		projectRoot := m.projectRoot
 		taskID := task.ID
@@ -1497,7 +1512,7 @@ func (m Model) spawnGroupPlanGeneration(group *model.Group) (tea.Model, tea.Cmd)
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan")
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels)
 	} else {
 		projectRoot := m.projectRoot
 		groupID := group.ID
@@ -1554,7 +1569,7 @@ func (m Model) executeCombinePlans(taskIDs []string, name string) (tea.Model, te
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan")
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels)
 	} else {
 		projectRoot := m.projectRoot
 		planName := name
@@ -1608,7 +1623,7 @@ func (m Model) executeFollowUp(taskID, question string) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan")
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels)
 	} else {
 		projectRoot := m.projectRoot
 		hasPlanFile := task.PlanFile != ""
@@ -1766,7 +1781,7 @@ func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
 	m.mode = model.ModeProcessDetail
 	m.scrollOffset = 999999 // Scroll to bottom
 
-	return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, msg.ProcessID, msg.SessionID, msg.Message)
+	return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, msg.ProcessID, msg.SessionID, msg.Message, m.processCancels)
 }
 
 func (m Model) handleProcessDone(msg claude.ProcessDoneMsg) (tea.Model, tea.Cmd) {
