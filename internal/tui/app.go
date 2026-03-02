@@ -250,7 +250,7 @@ func (m Model) View() string {
 		maxContentLines = 5
 	}
 
-	content := m.renderContent()
+	content := m.renderContent(maxContentLines)
 
 	// Clip content to fit available space
 	contentLines := strings.Split(content, "\n")
@@ -349,7 +349,7 @@ func (m Model) renderHeader(projectName string) string {
 		title + "\n\n" + horizontalLine(lineWidth))
 }
 
-func (m Model) renderContent() string {
+func (m Model) renderContent(contentHeight int) string {
 	switch m.mode {
 	case model.ModeAddTask, model.ModeEditTask, model.ModeFilter,
 		model.ModeEditTags, model.ModeEditDescription, model.ModeTaskViewAsk,
@@ -377,31 +377,31 @@ func (m Model) renderContent() string {
 
 	case model.ModePlan:
 		content := renderPlanView(m.projectRoot, m.selectedTask(), m.selectedGroup(), m.width-8)
-		return renderScrollable(content, m.scrollOffset, m.height-8)
+		return renderScrollable(content, m.scrollOffset, contentHeight)
 
 	case model.ModeGroupDetail:
 		if g := m.selectedGroup(); g != nil {
 			content := renderGroupView(g, m.store, m.projectRoot)
-			return renderScrollable(content, m.scrollOffset, m.height-8)
+			return renderScrollable(content, m.scrollOffset, contentHeight)
 		}
 		return ""
 
 	case model.ModeTaskView:
 		if t := m.selectedTask(); t != nil {
 			content := renderTaskView(t, m.projectRoot, m.width-8)
-			return renderScrollable(content, m.scrollOffset, m.height-8)
+			return renderScrollable(content, m.scrollOffset, contentHeight)
 		}
 		return ""
 
 	case model.ModeProcessDetail:
 		if m.processIdx < len(m.processes) {
 			content := renderProcessDetail(&m.processes[m.processIdx])
-			return renderScrollable(content, m.scrollOffset, m.height-8)
+			return renderScrollable(content, m.scrollOffset, contentHeight)
 		}
 		return ""
 
 	case model.ModeHelp:
-		return renderScrollable(renderHelp(), m.scrollOffset, m.height-8)
+		return renderScrollable(renderHelp(), m.scrollOffset, contentHeight)
 
 	default:
 		return m.renderListView()
@@ -1319,6 +1319,10 @@ func (m Model) spawnPlanGeneration(task *model.Task) (tea.Model, tea.Cmd) {
 	}
 	m.processes = append(m.processes, proc)
 
+
+	// Set task status to planning
+	store.UpdateTask(m.projectRoot, task.ID, map[string]interface{}{"status": string(model.StatusPlanning)})
+	m.reload()
 
 	promptText := prompt.BuildPlanGenerationPrompt(task)
 	taskID := task.ID

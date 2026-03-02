@@ -63,6 +63,8 @@ func statusIcon(status string) string {
 	switch status {
 	case "pending":
 		return styleYellow.Render("●")
+	case "planning":
+		return styleMagenta.Render("◎")
 	case "in-progress":
 		return styleCyan.Render("◉")
 	case "done":
@@ -76,6 +78,8 @@ func statusLabel(status string) string {
 	switch status {
 	case "pending":
 		return styleYellow.Render("pending")
+	case "planning":
+		return styleMagenta.Render("planning")
 	case "in-progress":
 		return styleCyan.Render("in-progress")
 	case "done":

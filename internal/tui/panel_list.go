@@ -105,9 +105,15 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 				if childCount > 0 {
 					countStr = fmt.Sprintf("  (%d+%dsub)", taskCount, childCount)
 				}
+				hasPlan := item.Project.PlanFile != "" && store.PlanExists(projectRoot, item.Project.PlanFile)
+				planMark := ""
+				if hasPlan {
+					planMark = styleGreen.Render(" ✓")
+				}
 				line := depthIndent + chevronStyle.Render(chevron+" ") +
 					nameStyle.Render(truncate(item.Project.Name, maxName)) +
-					styleGray.Render(countStr)
+					styleGray.Render(countStr) +
+					planMark
 				lines = append(lines, line)
 				continue
 			}

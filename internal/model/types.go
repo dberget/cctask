@@ -6,6 +6,7 @@ type TaskStatus string
 
 const (
 	StatusPending    TaskStatus = "pending"
+	StatusPlanning   TaskStatus = "planning"
 	StatusInProgress TaskStatus = "in-progress"
 	StatusDone       TaskStatus = "done"
 )
@@ -13,6 +14,8 @@ const (
 func (s TaskStatus) Next() TaskStatus {
 	switch s {
 	case StatusPending:
+		return StatusPlanning
+	case StatusPlanning:
 		return StatusInProgress
 	case StatusInProgress:
 		return StatusDone
