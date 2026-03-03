@@ -133,11 +133,12 @@ type StreamEvent struct {
 }
 
 type ClaudeProcess struct {
-	ID      string
-	Label   string
-	Status  ProcessStatus
-	Output  string // Legacy plain-text output (kept for backward compat)
-	LogFile string
+	ID        string
+	Label     string
+	Status    ProcessStatus
+	Output    string // Legacy plain-text output (kept for backward compat)
+	LogFile   string
+	StartedAt time.Time
 
 	// Streaming fields
 	SessionID        string

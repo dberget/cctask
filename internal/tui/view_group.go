@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/progress"
 	"github.com/davidberget/cctask-go/internal/model"
 	"github.com/davidberget/cctask-go/internal/store"
 )
 
-func renderGroupView(group *model.Group, s *model.TaskStore, projectRoot string) string {
+func renderGroupView(group *model.Group, s *model.TaskStore, projectRoot string, prog progress.Model) string {
 	width := maxDetailWidth
 	tasks := store.GetTasksForGroup(s, group.ID)
 	children := store.GetChildGroups(s, group.ID)
@@ -41,6 +42,20 @@ func renderGroupView(group *model.Group, s *model.TaskStore, projectRoot string)
 		lines = append(lines, styleGray.Render(padRight("WorkDir:", 10))+group.WorkDir)
 	}
 	lines = append(lines, styleGray.Render(padRight("Plan:", 10))+planStatus(hasPlan))
+
+	// Progress bar
+	if len(tasks) > 0 {
+		done := 0
+		for _, t := range tasks {
+			if t.Status == model.StatusDone || t.Status == model.StatusMerged {
+				done++
+			}
+		}
+		pct := float64(done) / float64(len(tasks))
+		lines = append(lines, "")
+		lines = append(lines, styleGray.Render(padRight("Progress:", 10))+prog.ViewAs(pct)+
+			styleGray.Render(fmt.Sprintf("  %d/%d", done, len(tasks))))
+	}
 
 	// Subgroups section
 	if len(children) > 0 {

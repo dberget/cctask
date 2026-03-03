@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/davidberget/cctask-go/internal/model"
 	"github.com/davidberget/cctask-go/internal/store"
 )
 
-func renderDetailPanel(s *model.TaskStore, projectRoot string, selectedItem *model.ListItem, width int) string {
+func renderDetailPanel(s *model.TaskStore, projectRoot string, selectedItem *model.ListItem, width int, prog progress.Model) string {
 	if selectedItem == nil {
 		return styleGray.Render("Select a task or project to see details")
 	}
@@ -20,7 +21,7 @@ func renderDetailPanel(s *model.TaskStore, projectRoot string, selectedItem *mod
 		return renderTaskDetail(selectedItem.Task, projectRoot, width)
 	}
 	if selectedItem.Kind == model.ListItemProject {
-		return renderGroupDetail(selectedItem.Project, s, projectRoot, width)
+		return renderGroupDetail(selectedItem.Project, s, projectRoot, width, prog)
 	}
 	return ""
 }
@@ -124,7 +125,7 @@ func renderTaskDetail(task *model.Task, projectRoot string, width int) string {
 	return lipgloss.NewStyle().PaddingLeft(1).Width(width).Render(content)
 }
 
-func renderGroupDetail(group *model.Group, s *model.TaskStore, projectRoot string, width int) string {
+func renderGroupDetail(group *model.Group, s *model.TaskStore, projectRoot string, width int, prog progress.Model) string {
 	if width > maxDetailWidth {
 		width = maxDetailWidth
 	}
@@ -165,6 +166,20 @@ func renderGroupDetail(group *model.Group, s *model.TaskStore, projectRoot strin
 		lines = append(lines, styleGray.Render(padRight("Subgroups:", 12))+fmt.Sprintf("%d", len(children)))
 	}
 	lines = append(lines, styleGray.Render(padRight("Plan:", 12))+planStatus(hasPlan))
+
+	// Progress bar
+	if len(tasks) > 0 {
+		done := 0
+		for _, t := range tasks {
+			if t.Status == model.StatusDone || t.Status == model.StatusMerged {
+				done++
+			}
+		}
+		pct := float64(done) / float64(len(tasks))
+		smallProg := prog
+		smallProg.Width = min(width-16, 30)
+		lines = append(lines, styleGray.Render(padRight("Progress:", 12))+smallProg.ViewAs(pct))
+	}
 
 	// Show subgroups section
 	if len(children) > 0 {

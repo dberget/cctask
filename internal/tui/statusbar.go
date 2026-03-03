@@ -3,77 +3,26 @@ package tui
 import (
 	"strings"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/davidberget/cctask-go/internal/model"
 )
 
-func keyHint(key, label string) string {
-	return styleCyanBold.Render(key) + " " + styleDim.Render(label)
+func keyHint(k, label string) string {
+	return styleCyanBold.Render(k) + " " + styleDim.Render(label)
 }
 
-func renderStatusBar(mode model.ViewMode, selected *model.ListItem, message string, cols int) string {
+func renderStatusBar(h help.Model, keys KeyBindings, mode model.ViewMode, selected *model.ListItem, message string, cols int) string {
 	lineWidth := cols - 4
 	if lineWidth < 40 {
 		lineWidth = 40
 	}
 
+	bindings := modeShortHelp(keys, mode, selected)
 	var hints []string
-	switch mode {
-	case model.ModeList:
-		hints = listHints(selected)
-	case model.ModeDetail:
-		hints = []string{
-			keyHint("e", "edit desc"), keyHint("r", "run"), keyHint("p", "plan"),
-			keyHint("s", "status"), keyHint("Esc", "back"),
-		}
-	case model.ModePlan:
-		hints = []string{
-			keyHint("r", "run"), keyHint("e", "edit"), keyHint("p", "regenerate"), keyHint("Esc", "back"),
-		}
-	case model.ModeGroupDetail:
-		hints = []string{
-			keyHint("r", "run"), keyHint("p", "plan"), keyHint("d", "delete"),
-			keyHint("Esc", "back"),
-		}
-	case model.ModeTaskForm:
-		hints = []string{
-			keyHint("Tab", "next field"), keyHint("Enter", "next/submit"),
-			keyHint("Ctrl+S", "save"), keyHint("Esc", "cancel"),
-		}
-	case model.ModeCombineSelect:
-		hints = []string{
-			keyHint("Space", "toggle"), keyHint("Enter", "confirm"),
-			keyHint("Esc", "cancel"),
-		}
-	case model.ModeProcessDetail:
-		hints = []string{keyHint("x", "cancel"), keyHint("c", "chat"), keyHint("o", "full claude"), keyHint("Esc", "back")}
-	case model.ModeProcessChat:
-		hints = []string{keyHint("Enter", "answer"), keyHint("Esc", "skip")}
-	case model.ModeEditPlan, model.ModeEditContext:
-		hints = []string{
-			keyHint("i", "insert"), keyHint("Ctrl+S", "save"),
-			keyHint("q/Esc", "cancel"),
-		}
-	case model.ModeContextView:
-		hints = []string{
-			keyHint("e", "edit"), keyHint("Esc", "back"),
-		}
-	case model.ModeTaskView:
-		hints = []string{
-			keyHint("r", "run"), keyHint("e", "edit"), keyHint("p", "plan"),
-			keyHint("c", "ask claude"), keyHint("s", "status"),
-			keyHint("Esc", "back"),
-		}
-	case model.ModeHelp:
-		hints = []string{
-			keyHint("?/Esc", "back"),
-		}
-	case model.ModeTaskViewAsk, model.ModeGroupPrompt:
-		hints = []string{
-			keyHint("Enter", "send"), keyHint("Esc", "cancel"),
-		}
-	default:
-		hints = []string{
-			keyHint("Enter", "confirm"), keyHint("Esc", "cancel"),
+	for _, b := range bindings {
+		if b.Help().Key != "" {
+			hints = append(hints, keyHint(b.Help().Key, b.Help().Desc))
 		}
 	}
 
@@ -85,56 +34,14 @@ func renderStatusBar(mode model.ViewMode, selected *model.ListItem, message stri
 	return horizontalLine(lineWidth) + "\n" + hintLine
 }
 
-func listHints(sel *model.ListItem) []string {
-	isTask := sel != nil && sel.Kind == model.ListItemTask
-	isGroup := sel != nil && sel.Kind == model.ListItemProject
-	hasSelection := isTask || isGroup
-
-	var h []string
-	h = append(h, keyHint("a", "add"))
-	if hasSelection {
-		h = append(h, keyHint("e", "edit"))
-		h = append(h, keyHint("d", "delete"))
-	}
-	if isTask {
-		h = append(h, keyHint("g", "project"))
-	} else if isGroup {
-		h = append(h, keyHint("g", "subgroup"))
-	} else {
-		h = append(h, keyHint("g", "project"))
-	}
-	if hasSelection {
-		h = append(h, keyHint("r", "run"))
-		h = append(h, keyHint("p", "plan"))
-	}
-	if isTask {
-		h = append(h, keyHint("s", "status"))
-	}
-	h = append(h, keyHint("c", "prompt"))
-	h = append(h, keyHint("/", "filter"))
-	if isGroup && sel.Project != nil && sel.Project.PlanFile != "" {
-		h = append(h, keyHint("v", "view plan"))
-	}
-	h = append(h, keyHint("m", "merge"))
-	h = append(h, keyHint("H", "hide done"))
-	if hasSelection {
-		h = append(h, keyHint("Enter", "detail"))
-	}
-	if isGroup {
-		h = append(h, keyHint("Space", "collapse"))
-	}
-	h = append(h, keyHint("?", "help"), keyHint("q", "quit"))
-	return h
-}
-
-func renderHelp() string {
-	h := func(title string) string { return styleCyanBold.Render(title) }
-	k := func(key, desc string) string {
-		return "  " + styleCyanBold.Render(padRight(key, 14)) + desc
+func renderHelp(h help.Model, keys KeyBindings) string {
+	hdr := func(title string) string { return styleCyanBold.Render(title) }
+	k := func(ky, desc string) string {
+		return "  " + styleCyanBold.Render(padRight(ky, 14)) + desc
 	}
 
 	var lines []string
-	lines = append(lines, h("List View"))
+	lines = append(lines, hdr("List View"))
 	lines = append(lines, k("j/k, Up/Down", "Navigate items"))
 	lines = append(lines, k("Enter", "Open detail / group view"))
 	lines = append(lines, k("v", "Full-screen task view"))
@@ -151,12 +58,14 @@ func renderHelp() string {
 	lines = append(lines, k("/", "Filter tasks"))
 	lines = append(lines, k("H", "Toggle hide completed"))
 	lines = append(lines, k("t", "Change theme"))
+	lines = append(lines, k("T", "Table view"))
+	lines = append(lines, k("L", "Flat list view"))
 	lines = append(lines, k("Space", "Collapse / expand group"))
 	lines = append(lines, k("Tab", "Switch to process panel"))
 	lines = append(lines, k("q", "Quit"))
 	lines = append(lines, "")
 
-	lines = append(lines, h("Scroll (fullscreen views)"))
+	lines = append(lines, hdr("Scroll (fullscreen views)"))
 	lines = append(lines, k("j/k", "Scroll line"))
 	lines = append(lines, k("d / Ctrl+D", "Half-page down"))
 	lines = append(lines, k("u / Ctrl+U", "Half-page up"))
@@ -164,7 +73,7 @@ func renderHelp() string {
 	lines = append(lines, k("G", "Go to bottom"))
 	lines = append(lines, "")
 
-	lines = append(lines, h("Task View"))
+	lines = append(lines, hdr("Task View"))
 	lines = append(lines, k("r", "Run"))
 	lines = append(lines, k("e", "Edit"))
 	lines = append(lines, k("p", "Plan"))
@@ -172,18 +81,20 @@ func renderHelp() string {
 	lines = append(lines, k("s", "Cycle status"))
 	lines = append(lines, "")
 
-	lines = append(lines, h("Process Detail"))
+	lines = append(lines, hdr("Process Detail"))
 	lines = append(lines, k("x", "Cancel running process"))
 	lines = append(lines, k("c", "Follow-up chat"))
 	lines = append(lines, k("o", "Open in full Claude"))
+	lines = append(lines, k("[/]", "Page processes"))
 	lines = append(lines, "")
 
-	lines = append(lines, h("Context View"))
+	lines = append(lines, hdr("Context View"))
 	lines = append(lines, k("e", "Edit context"))
+	lines = append(lines, k("i", "Import file"))
 	lines = append(lines, "  "+styleGray.Render("Global context from .cctask/context.md is prepended to all Claude prompts"))
 	lines = append(lines, "")
 
-	lines = append(lines, h("Text Input"))
+	lines = append(lines, hdr("Text Input"))
 	lines = append(lines, k("Enter", "Submit"))
 	lines = append(lines, k("Esc", "Cancel"))
 	lines = append(lines, k("Ctrl+A", "Jump to start"))
@@ -191,13 +102,17 @@ func renderHelp() string {
 	lines = append(lines, k("Ctrl+W", "Delete word"))
 	lines = append(lines, "")
 
-	lines = append(lines, h("Plan Editor"))
-	lines = append(lines, k("i/a/o", "Enter insert mode"))
+	lines = append(lines, hdr("Plan Editor"))
 	lines = append(lines, k("Ctrl+S", "Save"))
-	lines = append(lines, k("q / Esc", "Cancel"))
+	lines = append(lines, k("Esc", "Cancel"))
 	lines = append(lines, "")
 
 	lines = append(lines, styleGray.Render("Press ? or Esc to close"))
 
+	_ = h     // help model available for future auto-generation
+	_ = keys  // key bindings available for future auto-generation
 	return strings.Join(lines, "\n")
 }
+
+// suppress unused import warning
+var _ key.Binding

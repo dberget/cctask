@@ -28,6 +28,9 @@ const (
 	ModeHelp
 	ModeProcessChat
 	ModeAgentPicker
+	ModeTableView
+	ModeAllTasksList
+	ModeFilePicker
 )
 
 func (m ViewMode) String() string {
@@ -82,6 +85,12 @@ func (m ViewMode) String() string {
 		return "process-chat"
 	case ModeAgentPicker:
 		return "agent-picker"
+	case ModeTableView:
+		return "table-view"
+	case ModeAllTasksList:
+		return "all-tasks-list"
+	case ModeFilePicker:
+		return "file-picker"
 	default:
 		return "unknown"
 	}

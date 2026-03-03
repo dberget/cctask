@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -24,51 +26,96 @@ const (
 	fieldCount
 )
 
-var fieldLabels = [fieldCount]string{"Title", "Description", "Tags", "WorkDir"}
-var fieldHints = [fieldCount]string{"", "task details, context, acceptance criteria", "comma-separated", "relative or absolute path"}
-
 type FormModel struct {
 	Heading string
 	Active  formField
-	Values  [fieldCount]string
-	Cursors [fieldCount]int
 	Width   int
 
-	// Multiline description state
-	DescLines []string
-	DescLine  int
-	DescCol   int
+	title   textinput.Model
+	desc    textarea.Model
+	tags    textinput.Model
+	workDir textinput.Model
 }
 
 func NewForm(heading string, initial *TaskFormData, width int) FormModel {
-	m := FormModel{Heading: heading, Width: width}
+	// Title field
+	ti := textinput.New()
+	ti.Prompt = ""
+	ti.CharLimit = 0
+	ti.TextStyle = lipgloss.NewStyle().Foreground(colorWhite)
+	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorSecondary)
+	ti.CursorStyle = styleCursor
+	ti.Placeholder = "task title (required)"
+	ti.Focus()
+
+	// Description field
+	ta := textarea.New()
+	ta.Prompt = ""
+	ta.CharLimit = 0
+	ta.ShowLineNumbers = false
+	ta.SetHeight(6)
+	ta.Placeholder = "task details, context, acceptance criteria"
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	ta.FocusedStyle.Placeholder = lipgloss.NewStyle().Foreground(colorSecondary)
+	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
+	ta.BlurredStyle.Placeholder = lipgloss.NewStyle().Foreground(colorDim)
+	ta.Blur()
+
+	// Tags field
+	tg := textinput.New()
+	tg.Prompt = ""
+	tg.CharLimit = 0
+	tg.TextStyle = lipgloss.NewStyle().Foreground(colorWhite)
+	tg.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorSecondary)
+	tg.CursorStyle = styleCursor
+	tg.Placeholder = "comma-separated"
+	tg.Blur()
+
+	// WorkDir field
+	wd := textinput.New()
+	wd.Prompt = ""
+	wd.CharLimit = 0
+	wd.TextStyle = lipgloss.NewStyle().Foreground(colorWhite)
+	wd.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorSecondary)
+	wd.CursorStyle = styleCursor
+	wd.Placeholder = "relative or absolute path"
+	wd.Blur()
+
+	m := FormModel{
+		Heading: heading,
+		Width:   width,
+		title:   ti,
+		desc:    ta,
+		tags:    tg,
+		workDir: wd,
+	}
+
 	if initial != nil {
-		m.Values[fieldTitle] = initial.Title
-		m.Values[fieldDescription] = initial.Description
-		m.Values[fieldTags] = initial.Tags
-		m.Values[fieldWorkDir] = initial.WorkDir
-		m.Cursors[fieldTitle] = len(initial.Title)
-		m.Cursors[fieldTags] = len(initial.Tags)
-		m.Cursors[fieldWorkDir] = len(initial.WorkDir)
+		m.title.SetValue(initial.Title)
+		m.desc.SetValue(initial.Description)
+		m.tags.SetValue(initial.Tags)
+		m.workDir.SetValue(initial.WorkDir)
 	}
-	// Initialize DescLines from description
-	desc := m.Values[fieldDescription]
-	if desc == "" {
-		m.DescLines = []string{""}
-	} else {
-		m.DescLines = strings.Split(desc, "\n")
+
+	// Set widths
+	fieldWidth := width - 24
+	if fieldWidth < 30 {
+		fieldWidth = 60
 	}
-	m.DescLine = len(m.DescLines) - 1
-	m.DescCol = len(m.DescLines[m.DescLine])
+	m.title.Width = fieldWidth
+	m.desc.SetWidth(fieldWidth)
+	m.tags.Width = fieldWidth
+	m.workDir.Width = fieldWidth
+
 	return m
 }
 
 func (m FormModel) Data() TaskFormData {
 	return TaskFormData{
-		Title:       m.Values[fieldTitle],
-		Description: strings.Join(m.DescLines, "\n"),
-		Tags:        m.Values[fieldTags],
-		WorkDir:     m.Values[fieldWorkDir],
+		Title:       m.title.Value(),
+		Description: m.desc.Value(),
+		Tags:        m.tags.Value(),
+		WorkDir:     m.workDir.Value(),
 	}
 }
 
@@ -78,187 +125,65 @@ func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
 	case msg.Type == tea.KeyEscape:
 		return m, func() tea.Msg { return FormCancelMsg{} }
 	case msg.Type == tea.KeyCtrlS || msg.Type == tea.KeyCtrlD:
-		if strings.TrimSpace(m.Values[fieldTitle]) != "" {
+		if strings.TrimSpace(m.title.Value()) != "" {
 			data := m.Data()
 			return m, func() tea.Msg { return FormSubmitMsg{Data: data} }
 		}
 		return m, nil
 	case msg.Type == tea.KeyTab:
 		m.Active = formField((int(m.Active) + 1) % int(fieldCount))
+		m.focusActive()
 		return m, nil
 	case msg.Type == tea.KeyShiftTab:
 		m.Active = formField((int(m.Active) - 1 + int(fieldCount)) % int(fieldCount))
+		m.focusActive()
 		return m, nil
 	}
 
-	if m.Active == fieldDescription {
-		return m.updateDescription(msg)
-	}
-	return m.updateSingleLine(msg)
-}
-
-func (m FormModel) updateSingleLine(msg tea.KeyMsg) (FormModel, tea.Cmd) {
-	f := m.Active
-	val := m.Values[f]
-	cursor := m.Cursors[f]
-
-	switch {
-	case msg.Type == tea.KeyEnter:
-		if f == fieldWorkDir {
-			if strings.TrimSpace(m.Values[fieldTitle]) != "" {
+	// Enter on single-line fields advances to next field / submits
+	if msg.Type == tea.KeyEnter && m.Active != fieldDescription {
+		if m.Active == fieldWorkDir {
+			if strings.TrimSpace(m.title.Value()) != "" {
 				data := m.Data()
 				return m, func() tea.Msg { return FormSubmitMsg{Data: data} }
 			}
 		} else {
 			m.Active = formField(int(m.Active) + 1)
+			m.focusActive()
 		}
-	case msg.Type == tea.KeyBackspace:
-		if cursor > 0 {
-			m.Values[f] = val[:cursor-1] + val[cursor:]
-			m.Cursors[f] = cursor - 1
-		}
-	case msg.Type == tea.KeyLeft:
-		if cursor > 0 {
-			m.Cursors[f] = cursor - 1
-		}
-	case msg.Type == tea.KeyRight:
-		if cursor < len(val) {
-			m.Cursors[f] = cursor + 1
-		}
-	case msg.Type == tea.KeyCtrlA:
-		m.Cursors[f] = 0
-	case msg.Type == tea.KeyCtrlE:
-		m.Cursors[f] = len(val)
-	case msg.Type == tea.KeySpace:
-		m.Values[f] = val[:cursor] + " " + val[cursor:]
-		m.Cursors[f] = cursor + 1
-	case msg.Type == tea.KeyRunes:
-		ch := string(msg.Runes)
-		m.Values[f] = val[:cursor] + ch + val[cursor:]
-		m.Cursors[f] = cursor + len(ch)
+		return m, nil
 	}
-	return m, nil
+
+	// Delegate to active field
+	var cmd tea.Cmd
+	switch m.Active {
+	case fieldTitle:
+		m.title, cmd = m.title.Update(msg)
+	case fieldDescription:
+		m.desc, cmd = m.desc.Update(msg)
+	case fieldTags:
+		m.tags, cmd = m.tags.Update(msg)
+	case fieldWorkDir:
+		m.workDir, cmd = m.workDir.Update(msg)
+	}
+	return m, cmd
 }
 
-// descVisualRows builds a flat list of visual rows across all logical lines,
-// each tagged with the logical line index and byte offset within that line.
-type descVRow struct {
-	logLine int
-	offset  int
-	length  int
-}
-
-func (m FormModel) descVisualRows() []descVRow {
-	w := m.descAvailWidth()
-	var all []descVRow
-	for i, dl := range m.DescLines {
-		_, offsets := softWrapLine(dl, w)
-		for vi, off := range offsets {
-			var ln int
-			if vi+1 < len(offsets) {
-				ln = offsets[vi+1] - off
-			} else {
-				ln = len(dl) - off
-			}
-			all = append(all, descVRow{logLine: i, offset: off, length: ln})
-		}
+func (m *FormModel) focusActive() {
+	m.title.Blur()
+	m.desc.Blur()
+	m.tags.Blur()
+	m.workDir.Blur()
+	switch m.Active {
+	case fieldTitle:
+		m.title.Focus()
+	case fieldDescription:
+		m.desc.Focus()
+	case fieldTags:
+		m.tags.Focus()
+	case fieldWorkDir:
+		m.workDir.Focus()
 	}
-	return all
-}
-
-func (m FormModel) updateDescription(msg tea.KeyMsg) (FormModel, tea.Cmd) {
-	line := m.DescLine
-	col := m.DescCol
-	cur := m.DescLines[line]
-
-	switch {
-	case msg.Type == tea.KeyEnter:
-		// Split current line at cursor
-		before := cur[:col]
-		after := cur[col:]
-		newLines := make([]string, 0, len(m.DescLines)+1)
-		newLines = append(newLines, m.DescLines[:line]...)
-		newLines = append(newLines, before, after)
-		if line+1 < len(m.DescLines) {
-			newLines = append(newLines, m.DescLines[line+1:]...)
-		}
-		m.DescLines = newLines
-		m.DescLine = line + 1
-		m.DescCol = 0
-
-	case msg.Type == tea.KeyBackspace:
-		if col > 0 {
-			m.DescLines[line] = cur[:col-1] + cur[col:]
-			m.DescCol = col - 1
-		} else if line > 0 {
-			// Join with previous line
-			prevLen := len(m.DescLines[line-1])
-			m.DescLines[line-1] += cur
-			m.DescLines = append(m.DescLines[:line], m.DescLines[line+1:]...)
-			m.DescLine = line - 1
-			m.DescCol = prevLen
-		}
-
-	case msg.Type == tea.KeyUp, msg.Type == tea.KeyDown:
-		vrows := m.descVisualRows()
-		// Find current visual row
-		curVRow := 0
-		for vi, vr := range vrows {
-			if vr.logLine == line && col >= vr.offset && col <= vr.offset+vr.length {
-				curVRow = vi
-				break
-			}
-		}
-		localCol := col - vrows[curVRow].offset
-		var targetVRow int
-		if msg.Type == tea.KeyUp {
-			targetVRow = curVRow - 1
-		} else {
-			targetVRow = curVRow + 1
-		}
-		if targetVRow >= 0 && targetVRow < len(vrows) {
-			tv := vrows[targetVRow]
-			m.DescLine = tv.logLine
-			newCol := tv.offset + localCol
-			maxCol := tv.offset + tv.length
-			if newCol > maxCol {
-				newCol = maxCol
-			}
-			m.DescCol = newCol
-		}
-
-	case msg.Type == tea.KeyLeft:
-		if col > 0 {
-			m.DescCol = col - 1
-		} else if line > 0 {
-			m.DescLine = line - 1
-			m.DescCol = len(m.DescLines[line-1])
-		}
-
-	case msg.Type == tea.KeyRight:
-		if col < len(cur) {
-			m.DescCol = col + 1
-		} else if line < len(m.DescLines)-1 {
-			m.DescLine = line + 1
-			m.DescCol = 0
-		}
-
-	case msg.Type == tea.KeyCtrlA:
-		m.DescCol = 0
-
-	case msg.Type == tea.KeyCtrlE:
-		m.DescCol = len(cur)
-
-	case msg.Type == tea.KeySpace:
-		m.DescLines[line] = cur[:col] + " " + cur[col:]
-		m.DescCol = col + 1
-
-	case msg.Type == tea.KeyRunes:
-		ch := string(msg.Runes)
-		m.DescLines[line] = cur[:col] + ch + cur[col:]
-		m.DescCol = col + len(ch)
-	}
-	return m, nil
 }
 
 func (m FormModel) View() string {
@@ -267,9 +192,10 @@ func (m FormModel) View() string {
 	lines = append(lines, styleGray.Render("Tab: next field  Enter: next/newline  Ctrl+S: save  Esc: cancel"))
 	lines = append(lines, "")
 
+	labels := [fieldCount]string{"Title", "Description", "Tags", "WorkDir"}
+
 	for i := formField(0); i < fieldCount; i++ {
 		isActive := i == m.Active
-
 		labelColor := colorSecondary
 		if isActive {
 			labelColor = colorPrimary
@@ -278,148 +204,30 @@ func (m FormModel) View() string {
 		if isActive {
 			indicator = "▸ "
 		}
-		labelStr := lipgloss.NewStyle().Foreground(labelColor).Bold(isActive).Render(indicator + fieldLabels[i] + ":")
+		labelStr := lipgloss.NewStyle().Foreground(labelColor).Bold(isActive).Render(indicator + labels[i] + ":")
 		labelPadded := lipgloss.NewStyle().Width(16).Render(labelStr)
 
-		if i == fieldDescription {
-			lines = append(lines, m.viewDescription(isActive, labelPadded)...)
-		} else {
-			val := m.Values[i]
-			cursor := m.Cursors[i]
-			var valueStr string
-			if isActive {
-				valueStr = renderEditableLine(val, cursor)
-			} else if val != "" {
-				valueStr = val
-			} else {
-				hint := fieldHints[i]
-				if hint == "" {
-					hint = "empty"
+		switch i {
+		case fieldTitle:
+			lines = append(lines, labelPadded+m.title.View())
+		case fieldDescription:
+			// Render description with indented multiline
+			descView := m.desc.View()
+			descLines := strings.Split(descView, "\n")
+			for j, dl := range descLines {
+				if j == 0 {
+					lines = append(lines, labelPadded+dl)
+				} else {
+					lines = append(lines, strings.Repeat(" ", 16)+dl)
 				}
-				valueStr = styleGray.Render("(" + hint + ")")
 			}
-			lines = append(lines, labelPadded+valueStr)
+		case fieldTags:
+			lines = append(lines, labelPadded+m.tags.View())
+		case fieldWorkDir:
+			lines = append(lines, labelPadded+m.workDir.View())
 		}
 		lines = append(lines, "")
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-// softWrapLine breaks a single line into visual rows of at most width chars.
-// Returns the visual rows and, for each row, the starting byte offset into the original line.
-func softWrapLine(line string, width int) (rows []string, offsets []int) {
-	if width < 10 {
-		width = 10
-	}
-	if len(line) <= width {
-		return []string{line}, []int{0}
-	}
-	pos := 0
-	for pos < len(line) {
-		end := pos + width
-		if end >= len(line) {
-			rows = append(rows, line[pos:])
-			offsets = append(offsets, pos)
-			break
-		}
-		// Try to break at a space
-		breakAt := end
-		for i := end; i > pos+width/2; i-- {
-			if line[i] == ' ' {
-				breakAt = i
-				break
-			}
-		}
-		rows = append(rows, line[pos:breakAt])
-		offsets = append(offsets, pos)
-		pos = breakAt
-		if pos < len(line) && line[pos] == ' ' {
-			pos++
-		}
-	}
-	if len(rows) == 0 {
-		return []string{""}, []int{0}
-	}
-	return rows, offsets
-}
-
-func (m FormModel) descAvailWidth() int {
-	// Width is the full terminal; subtract 4 for outer padding (2 left + 2 right)
-	// and 16 for the label column
-	w := m.Width - 4 - 16
-	if w < 20 {
-		w = 60
-	}
-	return w
-}
-
-func (m FormModel) viewDescription(isActive bool, labelPadded string) []string {
-	var rows []string
-	indent := strings.Repeat(" ", 16)
-	availWidth := m.descAvailWidth()
-
-	if isActive {
-		firstRow := true
-		for i, dl := range m.DescLines {
-			vRows, vOffsets := softWrapLine(dl, availWidth)
-			isCursorLine := i == m.DescLine
-
-			for vi, vr := range vRows {
-				prefix := indent
-				if firstRow {
-					prefix = labelPadded
-					firstRow = false
-				}
-
-				if isCursorLine {
-					// Check if cursor falls on this visual row
-					rowStart := vOffsets[vi]
-					var rowEnd int
-					if vi+1 < len(vOffsets) {
-						rowEnd = vOffsets[vi+1]
-					} else {
-						rowEnd = len(dl)
-					}
-					if m.DescCol >= rowStart && m.DescCol <= rowEnd {
-						localCol := m.DescCol - rowStart
-						rows = append(rows, prefix+renderEditableLine(vr, localCol))
-					} else {
-						rows = append(rows, prefix+vr)
-					}
-				} else {
-					rows = append(rows, prefix+vr)
-				}
-			}
-		}
-	} else {
-		joined := strings.Join(m.DescLines, "\n")
-		if strings.TrimSpace(joined) == "" {
-			hint := fieldHints[fieldDescription]
-			rows = append(rows, labelPadded+styleGray.Render("("+hint+")"))
-		} else {
-			wrapped := wrapText(joined, availWidth)
-			for i, wl := range strings.Split(wrapped, "\n") {
-				prefix := indent
-				if i == 0 {
-					prefix = labelPadded
-				}
-				rows = append(rows, prefix+wl)
-			}
-		}
-	}
-	return rows
-}
-
-func renderEditableLine(value string, cursor int) string {
-	if value == "" && cursor == 0 {
-		return styleCursor.Render(" ")
-	}
-	before := safeSlice(value, 0, cursor)
-	cursorChar := " "
-	if cursor < len(value) {
-		cursorChar = string(value[cursor])
-	}
-	after := safeSlice(value, cursor+1, len(value))
-	return before + styleCursor.Render(cursorChar) + after
 }

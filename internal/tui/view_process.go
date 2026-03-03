@@ -32,6 +32,9 @@ func renderRichProcessDetail(proc *model.ClaudeProcess, width int) string {
 	if proc.CostUSD > 0 {
 		header += "  " + styleDim.Render(fmt.Sprintf("$%.4f", proc.CostUSD))
 	}
+	if elapsed := processElapsed(proc); elapsed != "" {
+		header += "  " + styleDim.Render("⏱ " + elapsed)
+	}
 	lines = append(lines, header)
 	lines = append(lines, horizontalLine(min(width, 60)))
 	lines = append(lines, "")

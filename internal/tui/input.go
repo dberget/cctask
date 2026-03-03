@@ -4,24 +4,30 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// --- TextInputModel ---
+// --- TextInputModel wraps bubbles textinput ---
 
 type TextInputModel struct {
-	Label       string
-	Placeholder string
-	Value       string
-	Cursor      int
+	Label string
+	inner textinput.Model
 }
 
 func NewTextInput(label, initial string) TextInputModel {
+	ti := textinput.New()
+	ti.SetValue(initial)
+	ti.Focus()
+	ti.Prompt = ""
+	ti.TextStyle = lipgloss.NewStyle().Foreground(colorWhite)
+	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorSecondary)
+	ti.CursorStyle = styleCursor
+	ti.CharLimit = 0 // no limit
 	return TextInputModel{
-		Label:  label,
-		Value:  initial,
-		Cursor: len(initial),
+		Label: label,
+		inner: ti,
 	}
 }
 
@@ -30,74 +36,31 @@ func (m TextInputModel) Update(msg tea.KeyMsg) (TextInputModel, tea.Cmd) {
 	case msg.Type == tea.KeyEscape:
 		return m, func() tea.Msg { return TextCancelMsg{} }
 	case msg.Type == tea.KeyEnter:
-		if strings.TrimSpace(m.Value) != "" {
-			return m, func() tea.Msg { return TextSubmitMsg{Value: strings.TrimSpace(m.Value)} }
+		if strings.TrimSpace(m.inner.Value()) != "" {
+			val := strings.TrimSpace(m.inner.Value())
+			return m, func() tea.Msg { return TextSubmitMsg{Value: val} }
 		}
-	case msg.Type == tea.KeyBackspace:
-		if m.Cursor > 0 {
-			m.Value = m.Value[:m.Cursor-1] + m.Value[m.Cursor:]
-			m.Cursor--
-		}
-	case msg.Type == tea.KeyLeft:
-		if m.Cursor > 0 {
-			m.Cursor--
-		}
-	case msg.Type == tea.KeyRight:
-		if m.Cursor < len(m.Value) {
-			m.Cursor++
-		}
-	case msg.Type == tea.KeyCtrlA:
-		m.Cursor = 0
-	case msg.Type == tea.KeyCtrlE:
-		m.Cursor = len(m.Value)
-	case msg.Type == tea.KeyCtrlW:
-		if m.Cursor > 0 {
-			i := m.Cursor - 1
-			for i > 0 && m.Value[i-1] == ' ' {
-				i--
-			}
-			for i > 0 && m.Value[i-1] != ' ' {
-				i--
-			}
-			m.Value = m.Value[:i] + m.Value[m.Cursor:]
-			m.Cursor = i
-		}
-	case msg.Type == tea.KeySpace:
-		m.Value = m.Value[:m.Cursor] + " " + m.Value[m.Cursor:]
-		m.Cursor++
-	case msg.Type == tea.KeyRunes:
-		ch := string(msg.Runes)
-		m.Value = m.Value[:m.Cursor] + ch + m.Value[m.Cursor:]
-		m.Cursor += len(ch)
+		return m, nil
 	}
-	return m, nil
+	var cmd tea.Cmd
+	m.inner, cmd = m.inner.Update(msg)
+	return m, cmd
 }
 
 func (m TextInputModel) View() string {
-	displayValue := m.Value
-	isPlaceholder := false
-	if displayValue == "" && m.Placeholder != "" {
-		displayValue = m.Placeholder
-		isPlaceholder = true
-	}
-
-	textColor := colorWhite
-	if isPlaceholder {
-		textColor = colorSecondary
-	}
-
-	before := lipgloss.NewStyle().Foreground(textColor).Render(safeSlice(displayValue, 0, m.Cursor))
-	cursorChar := " "
-	if m.Cursor < len(displayValue) {
-		cursorChar = string(displayValue[m.Cursor])
-	}
-	cursor := styleCursor.Render(cursorChar)
-	after := lipgloss.NewStyle().Foreground(textColor).Render(safeSlice(displayValue, m.Cursor+1, len(displayValue)))
-
-	return styleCyanBold.Render(m.Label+": ") + before + cursor + after
+	return styleCyanBold.Render(m.Label+": ") + m.inner.View()
 }
 
-// --- SelectInputModel ---
+func (m TextInputModel) Value() string {
+	return m.inner.Value()
+}
+
+// SetPlaceholder sets placeholder text on the underlying textinput.
+func (m *TextInputModel) SetPlaceholder(p string) {
+	m.inner.Placeholder = p
+}
+
+// --- SelectInputModel (kept as-is, too simple to benefit from replacement) ---
 
 type SelectItem struct {
 	Label string

@@ -4,11 +4,12 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/paginator"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/davidberget/cctask-go/internal/model"
 )
 
-func renderProcessPanel(processes []model.ClaudeProcess, selectedIndex int, isFocused bool) string {
+func renderProcessPanel(processes []model.ClaudeProcess, selectedIndex int, isFocused bool, pg paginator.Model) string {
 	if len(processes) == 0 {
 		return ""
 	}
@@ -25,7 +26,11 @@ func renderProcessPanel(processes []model.ClaudeProcess, selectedIndex int, isFo
 	lines = append(lines, horizontalLine(28))
 	lines = append(lines, "")
 
-	for i, proc := range processes {
+	// Determine which processes to show on the current page
+	start, end := pg.GetSliceBounds(len(processes))
+
+	for i := start; i < end; i++ {
+		proc := processes[i]
 		isSelected := isFocused && i == selectedIndex
 		indicator := "  "
 		if isSelected {
@@ -42,10 +47,15 @@ func renderProcessPanel(processes []model.ClaudeProcess, selectedIndex int, isFo
 			sessionTag = styleDim.Render(" ↻")
 		}
 
+		elapsed := processElapsed(&processes[i])
+		elapsedStr := ""
+		if elapsed != "" {
+			elapsedStr = styleDim.Render(" " + elapsed)
+		}
 		line := lipgloss.NewStyle().Foreground(nameColor).Render(indicator) +
 			processStatusSymbol(string(proc.Status)) + " " +
-			lipgloss.NewStyle().Bold(isSelected).Foreground(nameColor).Render(truncate(proc.Label, 20)) +
-			sessionTag
+			lipgloss.NewStyle().Bold(isSelected).Foreground(nameColor).Render(truncate(proc.Label, 18)) +
+			sessionTag + elapsedStr
 		lines = append(lines, line)
 
 		outputLine := "    " + styleGray.Render(lastLine(proc.Output))
@@ -53,9 +63,19 @@ func renderProcessPanel(processes []model.ClaudeProcess, selectedIndex int, isFo
 		lines = append(lines, "")
 	}
 
+	// Show pagination dots if there are multiple pages
+	if pg.TotalPages > 1 {
+		lines = append(lines, pg.View())
+		lines = append(lines, "")
+	}
+
 	if isFocused {
 		lines = append(lines, styleGray.Render("Enter: full view"))
-		lines = append(lines, styleGray.Render("x: cancel  o: claude"))
+		hints := "x: cancel  o: claude"
+		if pg.TotalPages > 1 {
+			hints += "  [/]: page"
+		}
+		lines = append(lines, styleGray.Render(hints))
 	}
 
 	content := strings.Join(lines, "\n")

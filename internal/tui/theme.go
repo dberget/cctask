@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/lipgloss"
+)
 
 var (
 	// ── Color Palette ──────────────────────────────────
@@ -131,6 +134,29 @@ func planStatus(hasPlan bool) string {
 		return styleGreen.Render("✓ saved")
 	}
 	return styleDim.Render("none")
+}
+
+// applyThemeToBubbles updates styles on all bubbles components after a theme change.
+// Must be called as: m = m.applyThemeToBubblesM() or inlined in the calling code.
+func applyThemeToBubbles(m *Model) {
+	// Help model styles
+	m.helpModel.Styles.ShortKey = lipgloss.NewStyle().Foreground(colorPrimary)
+	m.helpModel.Styles.ShortDesc = lipgloss.NewStyle().Foreground(colorSecondary)
+	m.helpModel.Styles.ShortSeparator = lipgloss.NewStyle().Foreground(colorDim)
+	m.helpModel.Styles.FullKey = lipgloss.NewStyle().Foreground(colorPrimary)
+	m.helpModel.Styles.FullDesc = lipgloss.NewStyle().Foreground(colorSecondary)
+	m.helpModel.Styles.FullSeparator = lipgloss.NewStyle().Foreground(colorDim)
+
+	// Progress bar gradient
+	m.groupProgress = progress.New(progress.WithScaledGradient(string(colorPrimary), string(colorSuccess)))
+	m.groupProgress.Width = 40
+
+	// Paginator dots
+	m.processPaginator.ActiveDot = lipgloss.NewStyle().Foreground(colorPrimary).Render("●")
+	m.processPaginator.InactiveDot = lipgloss.NewStyle().Foreground(colorDim).Render("○")
+
+	// Spinner
+	m.spinner.Style = styleMagenta
 }
 
 // ApplyTheme sets all color and style variables from a named theme preset.

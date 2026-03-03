@@ -9,7 +9,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/filepicker"
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/paginator"
+	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/stopwatch"
+	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/timer"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/davidberget/cctask-go/internal/agent"
@@ -98,8 +108,8 @@ type Model struct {
 	// Collapsed groups in list view
 	collapsedGroups map[string]bool
 
-	// Scroll offset for fullscreen views
-	scrollOffset int
+	// Viewport for fullscreen view scrolling
+	viewport viewport.Model
 
 	// Scroll offset for list panel
 	listScrollOffset int
@@ -109,6 +119,21 @@ type Model struct {
 
 	// Vim gg state
 	pendingG bool
+
+	// Key bindings and help
+	keys      KeyBindings
+	helpModel help.Model
+
+	// Group progress bar
+	groupProgress progress.Model
+
+	// Table, list, and file picker views
+	taskTable  table.Model
+	taskList   list.Model
+	filePicker filepicker.Model
+
+	// Process panel pagination
+	processPaginator paginator.Model
 
 	// Spinner for planning/running tasks
 	spinner spinner.Model
@@ -143,6 +168,19 @@ func NewModel(projectRoot string) Model {
 	}
 	sp.Style = styleMagenta
 
+	vp := viewport.New(76, 16)
+	vp.MouseWheelEnabled = true
+
+	prog := progress.New(progress.WithScaledGradient(string(colorPrimary), string(colorSuccess)))
+	prog.Width = 40
+
+	pg := paginator.New()
+	pg.Type = paginator.Dots
+	pg.ActiveDot = lipgloss.NewStyle().Foreground(colorPrimary).Render("●")
+	pg.InactiveDot = lipgloss.NewStyle().Foreground(colorDim).Render("○")
+	pg.SetTotalPages(0)
+	pg.PerPage = 4
+
 	m := Model{
 		projectRoot:     projectRoot,
 		store:           s,
@@ -155,7 +193,12 @@ func NewModel(projectRoot string) Model {
 		width:           80,
 		height:          24,
 		agents:          agent.LoadAgents(projectRoot),
-		spinner:         sp,
+		keys:               NewKeyBindings(),
+		helpModel:          newHelpModel(),
+		groupProgress:      prog,
+		viewport:           vp,
+		spinner:            sp,
+		processPaginator:   pg,
 	}
 	m.rebuildList()
 	return m
@@ -199,10 +242,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 
+	case stopwatch.TickMsg, timer.TickMsg, timer.TimeoutMsg:
+		// Reserved for future stopwatch/timer integration
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.form.Width = msg.Width
+		// Update viewport dimensions for fullscreen scrolling
+		headerHeight := 4 // header + spacing
+		statusHeight := 3 // statusbar + spacing
+		vpHeight := msg.Height - headerHeight - statusHeight
+		if vpHeight < 5 {
+			vpHeight = 5
+		}
+		m.viewport.Width = msg.Width - 4 // account for padding
+		m.viewport.Height = vpHeight
 		if m.mode == model.ModeEditPlan {
 			m.editor.VH = msg.Height - 10
 			m.editor.VW = msg.Width - 12
@@ -285,6 +341,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Restore previous theme if cancelling theme picker
 		if m.mode == model.ModeThemePicker && m.previousTheme != "" {
 			ApplyTheme(m.previousTheme)
+			applyThemeToBubbles(&m)
 		}
 		m.mode = model.ModeList
 		m.action = actionNone
@@ -301,6 +358,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = m.returnMode
 		m.action = actionNone
 		return m, nil
+
+	case filePickerResultMsg:
+		content, err := readFileContent(msg.path)
+		if err != nil {
+			m.mode = model.ModeContextView
+			return m, flashCmd(fmt.Sprintf("Error reading file: %s", err))
+		}
+		// Append imported content to existing context
+		existing := store.LoadContext(m.projectRoot)
+		separator := ""
+		if existing != "" {
+			separator = "\n\n---\n\n"
+		}
+		if err := store.SaveContext(m.projectRoot, existing+separator+content); err != nil {
+			m.mode = model.ModeContextView
+			return m, flashCmd(fmt.Sprintf("Error saving context: %s", err))
+		}
+		m.mode = model.ModeContextView
+		return m, flashCmd(fmt.Sprintf("Imported: %s", msg.path))
 	}
 
 	return m, nil
@@ -318,7 +394,7 @@ func (m Model) View() string {
 	}
 
 	header := m.renderHeader(projectName)
-	statusBar := renderStatusBar(m.mode, m.selectedItem, m.message, m.width)
+	statusBar := renderStatusBar(m.helpModel, m.keys, m.mode, m.selectedItem, m.message, m.width)
 	statusRendered := lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(statusBar)
 
 	// Measure actual rendered heights to calculate available content space
@@ -355,6 +431,28 @@ func (m Model) View() string {
 }
 
 // --- State management ---
+
+// addProcess appends a process to the list with timing info.
+func (m *Model) addProcess(proc *model.ClaudeProcess) {
+	proc.StartedAt = time.Now()
+	m.processes = append(m.processes, *proc)
+	m.processPaginator.SetTotalPages(len(m.processes))
+}
+
+// processElapsed returns a human-readable elapsed time for a process.
+func processElapsed(proc *model.ClaudeProcess) string {
+	if proc.StartedAt.IsZero() {
+		return ""
+	}
+	d := time.Since(proc.StartedAt)
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm%ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh%dm", int(d.Hours()), int(d.Minutes())%60)
+}
 
 func (m *Model) reload() {
 	s, _ := store.LoadStore(m.projectRoot)
@@ -456,43 +554,58 @@ func (m Model) renderContent(contentHeight int) string {
 
 	case model.ModePlan:
 		content := renderPlanView(m.projectRoot, m.selectedTask(), m.selectedGroup(), m.width-8)
-		return renderScrollable(content, m.scrollOffset, contentHeight)
+		m.viewport.SetContent(content)
+		return m.viewport.View()
 
 	case model.ModeGroupDetail:
 		if g := m.selectedGroup(); g != nil {
-			content := renderGroupView(g, m.store, m.projectRoot)
-			return renderScrollable(content, m.scrollOffset, contentHeight)
+			content := renderGroupView(g, m.store, m.projectRoot, m.groupProgress)
+			m.viewport.SetContent(content)
+			return m.viewport.View()
 		}
 		return ""
 
 	case model.ModeTaskView:
 		if t := m.selectedTask(); t != nil {
 			content := renderTaskView(t, m.projectRoot, m.width-8)
-			return renderScrollable(content, m.scrollOffset, contentHeight)
+			m.viewport.SetContent(content)
+			return m.viewport.View()
 		}
 		return ""
 
 	case model.ModeProcessDetail:
 		if m.processIdx < len(m.processes) {
 			content := renderRichProcessDetail(&m.processes[m.processIdx], m.width-8)
-			return renderScrollable(content, m.scrollOffset, contentHeight)
+			m.viewport.SetContent(content)
+			return m.viewport.View()
 		}
 		return ""
 
 	case model.ModeProcessChat:
 		if m.processIdx < len(m.processes) {
 			content := renderRichProcessDetail(&m.processes[m.processIdx], m.width-8)
-			scrolled := renderScrollable(content, m.scrollOffset, contentHeight-2)
-			return scrolled + "\n" + m.chatInput.View()
+			m.viewport.SetContent(content)
+			return m.viewport.View() + "\n" + m.chatInput.View()
 		}
 		return ""
 
 	case model.ModeContextView:
 		content := renderContextView(m.projectRoot)
-		return renderScrollable(content, m.scrollOffset, contentHeight)
+		m.viewport.SetContent(content)
+		return m.viewport.View()
 
 	case model.ModeHelp:
-		return renderScrollable(renderHelp(), m.scrollOffset, contentHeight)
+		m.viewport.SetContent(renderHelp(m.helpModel, m.keys))
+		return m.viewport.View()
+
+	case model.ModeTableView:
+		return renderTableView(m.taskTable)
+
+	case model.ModeAllTasksList:
+		return m.taskList.View()
+
+	case model.ModeFilePicker:
+		return renderFilePickerView(m.filePicker)
 
 	default:
 		return m.renderListView()
@@ -517,12 +630,12 @@ func (m Model) renderListView() string {
 		detailWidth = maxDetailWidth
 	}
 
-	detailPanel := renderDetailPanel(m.store, m.projectRoot, m.selectedItem, detailWidth)
+	detailPanel := renderDetailPanel(m.store, m.projectRoot, m.selectedItem, detailWidth, m.groupProgress)
 	sep := lipgloss.NewStyle().PaddingLeft(2).PaddingRight(2).Render(verticalSeparator(listHeight))
 	panels := lipgloss.JoinHorizontal(lipgloss.Top, listPanel, sep, detailPanel)
 
 	if hasProcesses {
-		processPanel := renderProcessPanel(m.processes, m.processIdx, m.focusPanel == model.FocusProcesses)
+		processPanel := renderProcessPanel(m.processes, m.processIdx, m.focusPanel == model.FocusProcesses, m.processPaginator)
 		panels = lipgloss.JoinHorizontal(lipgloss.Top, panels, sep, processPanel)
 	}
 
@@ -557,6 +670,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Live preview: apply theme as user navigates
 		if m.mode == model.ModeThemePicker && m.selectInput.Index < len(m.selectInput.Items) {
 			ApplyTheme(m.selectInput.Items[m.selectInput.Index].Value)
+			applyThemeToBubbles(&m)
 		}
 		return m, cmd
 
@@ -577,9 +691,67 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.chatInput, cmd = m.chatInput.Update(msg)
 		return m, cmd
+
+	case model.ModeTableView:
+		return m.handleTableKey(msg)
+
+	case model.ModeAllTasksList:
+		return m.handleListKey(msg)
+
+	case model.ModeFilePicker:
+		return m.handleFilePickerKey(msg)
 	}
 
 	return m.handleNavKey(msg)
+}
+
+func (m Model) handleTableKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case msg.Type == tea.KeyEscape || (msg.Type == tea.KeyRunes && string(msg.Runes) == "T"):
+		m.mode = model.ModeList
+		return m, nil
+	case msg.Type == tea.KeyEnter:
+		row := m.taskTable.SelectedRow()
+		if row != nil && len(row) >= 2 {
+			taskID := row[1]
+			// Find task and select it
+			for i, item := range m.listItems {
+				if item.Kind == model.ListItemTask && item.Task != nil && item.Task.ID == taskID {
+					m.listIndex = i
+					m.updateSelectedItem()
+					m.viewport.GotoTop()
+					m.mode = model.ModeTaskView
+					return m, nil
+				}
+			}
+		}
+	}
+	var cmd tea.Cmd
+	m.taskTable, cmd = m.taskTable.Update(msg)
+	return m, cmd
+}
+
+func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case msg.Type == tea.KeyEscape:
+		m.mode = model.ModeList
+		return m, nil
+	case msg.Type == tea.KeyEnter:
+		if item, ok := m.taskList.SelectedItem().(TaskListItem); ok {
+			for i, li := range m.listItems {
+				if li.Kind == model.ListItemTask && li.Task != nil && li.Task.ID == item.task.ID {
+					m.listIndex = i
+					m.updateSelectedItem()
+					m.viewport.GotoTop()
+					m.mode = model.ModeTaskView
+					return m, nil
+				}
+			}
+		}
+	}
+	var cmd tea.Cmd
+	m.taskList, cmd = m.taskList.Update(msg)
+	return m, cmd
 }
 
 func (m Model) isFullscreenMode() bool {
@@ -591,60 +763,66 @@ func (m Model) isFullscreenMode() bool {
 }
 
 func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
+	k := msg.String()
 
 	// Clear pending g on any non-g key
-	if key != "g" {
+	if k != "g" {
 		m.pendingG = false
 	}
 
-	if key == "ctrl+c" || (key == "q" && m.mode == model.ModeList) {
+	if k == "ctrl+c" || (key.Matches(msg, m.keys.Quit) && m.mode == model.ModeList) {
 		return m, tea.Quit
 	}
 
-	if key == "?" {
+	if key.Matches(msg, m.keys.Help) {
 		if m.mode == model.ModeHelp {
 			m.mode = model.ModeList
 		} else {
 			m.mode = model.ModeHelp
-			m.scrollOffset = 0
+			m.viewport.GotoTop()
 		}
 		return m, nil
 	}
 
-	if key == "esc" && m.mode != model.ModeList {
+	if key.Matches(msg, m.keys.Back) && m.mode != model.ModeList {
 		m.mode = model.ModeList
-		m.scrollOffset = 0
+		m.viewport.GotoTop()
 		return m, nil
 	}
 
-	// Scroll in fullscreen views (including help)
+	// Scroll in fullscreen views (including help) via viewport
 	if m.isFullscreenMode() {
-		halfPage := max(1, (m.height-8)/2)
-		switch key {
-		case "j", "down":
-			m.scrollOffset++
+		halfPage := max(1, m.viewport.Height/2)
+		switch {
+		case key.Matches(msg, m.keys.ScrollDown):
+			m.viewport.LineDown(1)
 			return m, nil
-		case "k", "up":
-			m.scrollOffset = max(0, m.scrollOffset-1)
+		case key.Matches(msg, m.keys.ScrollUp):
+			m.viewport.LineUp(1)
 			return m, nil
-		case "d", "ctrl+d":
-			m.scrollOffset += halfPage
+		case key.Matches(msg, m.keys.HalfPageDown):
+			m.viewport.LineDown(halfPage)
 			return m, nil
-		case "u", "ctrl+u":
-			m.scrollOffset = max(0, m.scrollOffset-halfPage)
+		case key.Matches(msg, m.keys.HalfPageUp):
+			m.viewport.LineUp(halfPage)
 			return m, nil
-		case "G":
-			m.scrollOffset = 999999 // clamped in renderScrollable
+		case key.Matches(msg, m.keys.GotoBottom):
+			m.viewport.GotoBottom()
 			return m, nil
-		case "g":
+		case key.Matches(msg, m.keys.GotoTop):
 			if m.pendingG {
 				m.pendingG = false
-				m.scrollOffset = 0
+				m.viewport.GotoTop()
 			} else {
 				m.pendingG = true
 			}
 			return m, nil
+		}
+		// Let viewport handle mouse wheel
+		var cmd tea.Cmd
+		m.viewport, cmd = m.viewport.Update(msg)
+		if cmd != nil {
+			return m, cmd
 		}
 	}
 
@@ -653,7 +831,17 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if key == "k" || key == "up" {
+	// Process panel pagination
+	if key.Matches(msg, m.keys.PrevPage) && m.focusPanel == model.FocusProcesses {
+		m.processPaginator.PrevPage()
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.NextPage) && m.focusPanel == model.FocusProcesses {
+		m.processPaginator.NextPage()
+		return m, nil
+	}
+
+	if key.Matches(msg, m.keys.Up) {
 		if m.focusPanel == model.FocusMain && len(m.listItems) > 0 {
 			m.listIndex = max(0, m.listIndex-1)
 			m.updateSelectedItem()
@@ -662,7 +850,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if key == "j" || key == "down" {
+	if key.Matches(msg, m.keys.Down) {
 		if m.focusPanel == model.FocusMain && len(m.listItems) > 0 {
 			m.listIndex = min(len(m.listItems)-1, m.listIndex+1)
 			m.updateSelectedItem()
@@ -672,7 +860,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if key == "tab" {
+	if key.Matches(msg, m.keys.Tab) {
 		if m.focusPanel == model.FocusMain && len(m.processes) > 0 {
 			m.focusPanel = model.FocusProcesses
 		} else {
@@ -682,7 +870,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if key == " " && m.mode == model.ModeList && m.focusPanel == model.FocusMain {
+	if key.Matches(msg, m.keys.Collapse) && m.mode == model.ModeList && m.focusPanel == model.FocusMain {
 		if g := m.selectedGroup(); g != nil {
 			m.collapsedGroups[g.ID] = !m.collapsedGroups[g.ID]
 			m.rebuildList()
@@ -690,37 +878,37 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if key == "enter" && (m.mode == model.ModeList || m.mode == model.ModeDetail) {
+	if key.Matches(msg, m.keys.Enter) && (m.mode == model.ModeList || m.mode == model.ModeDetail) {
 		if m.focusPanel == model.FocusMain {
 			if m.selectedTask() != nil {
-				m.scrollOffset = 0
+				m.viewport.GotoTop()
 				m.mode = model.ModeTaskView
 				return m, nil
 			} else if m.selectedGroup() != nil {
-				m.scrollOffset = 0
+				m.viewport.GotoTop()
 				m.mode = model.ModeGroupDetail
 			}
 		} else if m.focusPanel == model.FocusProcesses && m.processIdx < len(m.processes) {
-			m.scrollOffset = 0
+			m.viewport.GotoTop()
 			m.mode = model.ModeProcessDetail
 		}
 		return m, nil
 	}
 
-	if key == "v" && (m.mode == model.ModeList || m.mode == model.ModeDetail) {
+	if key.Matches(msg, m.keys.View) && (m.mode == model.ModeList || m.mode == model.ModeDetail) {
 		if m.selectedTask() != nil {
-			m.scrollOffset = 0
+			m.viewport.GotoTop()
 			m.mode = model.ModeTaskView
 			return m, nil
 		}
 		if g := m.selectedGroup(); g != nil && g.PlanFile != "" {
-			m.scrollOffset = 0
+			m.viewport.GotoTop()
 			m.mode = model.ModePlan
 			return m, nil
 		}
 	}
 
-	if key == "c" && m.mode == model.ModeTaskView && m.selectedTask() != nil {
+	if key.Matches(msg, m.keys.Prompt) && m.mode == model.ModeTaskView && m.selectedTask() != nil {
 		m.action = actionFollowUp
 		m.actionTaskID = m.selectedTask().ID
 		m.textInput = NewTextInput("Question for Claude", "")
@@ -728,7 +916,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if key == "x" && m.processIdx < len(m.processes) {
+	if key.Matches(msg, m.keys.Cancel) && m.processIdx < len(m.processes) {
 		if m.focusPanel == model.FocusProcesses || m.mode == model.ModeProcessDetail {
 			proc := &m.processes[m.processIdx]
 			if proc.Status == model.ProcessRunning {
@@ -741,18 +929,17 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	if key == "o" && m.processIdx < len(m.processes) {
+	if key.Matches(msg, m.keys.OpenFull) && m.processIdx < len(m.processes) {
 		if m.focusPanel == model.FocusProcesses || m.mode == model.ModeProcessDetail {
 			proc := &m.processes[m.processIdx]
 			if proc.Status == model.ProcessRunning {
 				return m, flashCmd("Still running — press Enter to view output")
 			}
-			// Completed: launch interactive claude, resuming this process's session
 			return m, claude.ExecContinue(m.projectRoot, proc.SessionID)
 		}
 	}
 
-	if key == "c" && m.mode == model.ModeProcessDetail && m.processIdx < len(m.processes) {
+	if key.Matches(msg, m.keys.Chat) && m.mode == model.ModeProcessDetail && m.processIdx < len(m.processes) {
 		proc := &m.processes[m.processIdx]
 		if proc.Status == model.ProcessRunning {
 			return m, flashCmd("Wait for Claude to finish")
@@ -765,45 +952,45 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if key == "a" && m.mode == model.ModeList {
+	if key.Matches(msg, m.keys.Add) && m.mode == model.ModeList {
 		m.action = actionAddTask
 		m.form = NewForm("New Task", nil, m.width)
 		m.mode = model.ModeTaskForm
 		return m, nil
 	}
 
-	if key == "e" {
+	if key.Matches(msg, m.keys.Edit) {
 		return m.handleEdit()
 	}
 
-	if key == "d" && (m.mode == model.ModeList || m.mode == model.ModeDetail) {
+	if key.Matches(msg, m.keys.Delete) && (m.mode == model.ModeList || m.mode == model.ModeDetail) {
 		return m.handleDelete()
 	}
 
-	if key == "s" && m.selectedTask() != nil {
+	if key.Matches(msg, m.keys.CycleStatus) && m.selectedTask() != nil {
 		return m.cycleStatus()
 	}
 
-	if key == "g" && m.mode == model.ModeList {
+	if key.Matches(msg, m.keys.AssignGroup) && m.mode == model.ModeList {
 		return m.handleAssignGroup()
 	}
 
-	if key == "r" {
+	if key.Matches(msg, m.keys.Run) {
 		return m.handleRun()
 	}
 
-	if key == "p" && (m.mode == model.ModeList || m.mode == model.ModeDetail || m.mode == model.ModeTaskView || m.mode == model.ModePlan) {
+	if key.Matches(msg, m.keys.Plan) && (m.mode == model.ModeList || m.mode == model.ModeDetail || m.mode == model.ModeTaskView || m.mode == model.ModePlan) {
 		return m.handlePlan()
 	}
 
-	if key == "/" && m.mode == model.ModeList {
+	if key.Matches(msg, m.keys.Filter) && m.mode == model.ModeList {
 		m.action = actionFilter
 		m.textInput = NewTextInput("Filter", m.filter)
 		m.mode = model.ModeFilter
 		return m, nil
 	}
 
-	if key == "H" && m.mode == model.ModeList {
+	if key.Matches(msg, m.keys.HideDone) && m.mode == model.ModeList {
 		m.hideCompleted = !m.hideCompleted
 		m.rebuildList()
 		if m.hideCompleted {
@@ -812,21 +999,27 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, flashCmd("Showing all tasks")
 	}
 
-	if key == "m" && m.mode == model.ModeList {
+	if key.Matches(msg, m.keys.Merge) && m.mode == model.ModeList {
 		return m.handleCombine()
 	}
 
-	if key == "c" && m.mode == model.ModeList && m.focusPanel == model.FocusMain {
+	if key.Matches(msg, m.keys.Prompt) && m.mode == model.ModeList && m.focusPanel == model.FocusMain {
 		return m.handleGroupPrompt()
 	}
 
-	if key == "x" && m.mode == model.ModeList {
-		m.scrollOffset = 0
+	if key.Matches(msg, m.keys.Context) && m.mode == model.ModeList {
+		m.viewport.GotoTop()
 		m.mode = model.ModeContextView
 		return m, nil
 	}
 
-	if key == "t" && m.mode == model.ModeList {
+	if key.Matches(msg, m.keys.FilePick) && m.mode == model.ModeContextView {
+		m.filePicker = newFilePicker(m.projectRoot)
+		m.mode = model.ModeFilePicker
+		return m, m.filePicker.Init()
+	}
+
+	if key.Matches(msg, m.keys.Theme) && m.mode == model.ModeList {
 		cfg := store.LoadConfig(m.projectRoot)
 		m.previousTheme = cfg.Theme
 		if m.previousTheme == "" {
@@ -846,6 +1039,22 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.mode = model.ModeThemePicker
+		return m, nil
+	}
+
+	if key.Matches(msg, m.keys.TableView) && m.mode == model.ModeList {
+		tableHeight := m.height - 10
+		if tableHeight < 5 {
+			tableHeight = 5
+		}
+		m.taskTable = newTaskTable(m.store.Tasks, m.width-8, tableHeight)
+		m.mode = model.ModeTableView
+		return m, nil
+	}
+
+	if key.Matches(msg, m.keys.ListView) && m.mode == model.ModeList {
+		m.taskList = newTaskList(m.store.Tasks, m.width-8, m.height-8)
+		m.mode = model.ModeAllTasksList
 		return m, nil
 	}
 
@@ -1046,6 +1255,7 @@ func (m Model) handleSelectSubmit(value string) (tea.Model, tea.Cmd) {
 
 	if m.mode == model.ModeThemePicker {
 		ApplyTheme(value)
+		applyThemeToBubbles(&m)
 		cfg := store.LoadConfig(m.projectRoot)
 		cfg.Theme = value
 		store.SaveConfig(m.projectRoot, cfg)
@@ -1079,7 +1289,7 @@ func (m Model) handleMultiCheckSubmit(selected []string) (tea.Model, tea.Cmd) {
 	m.combineSelectedIDs = selected
 	m.action = actionCombineName
 	m.textInput = NewTextInput("Combined plan name", "")
-	m.textInput.Placeholder = "e.g. auth-full-plan"
+	m.textInput.SetPlaceholder("e.g. auth-full-plan")
 	m.mode = model.ModeCombineName
 	return m, nil
 }
@@ -1328,7 +1538,7 @@ func (m Model) spawnBackgroundRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 		store.UpdateTask(m.projectRoot, id, map[string]interface{}{"status": string(model.StatusInProgress)})
 		m.reload()
 	}
-	m.processes = append(m.processes, proc)
+	m.addProcess(&proc)
 
 	promptText += "\n\n" + prompt.McpToolGuidanceRun
 
@@ -1347,7 +1557,7 @@ func (m Model) handlePlan() (tea.Model, tea.Cmd) {
 
 	if t := m.selectedTask(); t != nil {
 		if t.PlanFile != "" && !alreadyViewing {
-			m.scrollOffset = 0
+			m.viewport.GotoTop()
 			m.mode = model.ModePlan
 			return m, nil
 		}
@@ -1367,7 +1577,7 @@ func (m Model) handlePlan() (tea.Model, tea.Cmd) {
 	}
 	if g := m.selectedGroup(); g != nil {
 		if g.PlanFile != "" && !alreadyViewing {
-			m.scrollOffset = 0
+			m.viewport.GotoTop()
 			m.mode = model.ModePlan
 			return m, nil
 		}
@@ -1536,7 +1746,7 @@ func (m Model) handleGroupPrompt() (tea.Model, tea.Cmd) {
 	m.actionScopeGroup = scopeGroupID
 	m.action = actionGroupPrompt
 	m.textInput = NewTextInput(fmt.Sprintf("Prompt for %s", scopeLabel), "")
-	m.textInput.Placeholder = "e.g. fill out tags, regroup tasks, review descriptions..."
+	m.textInput.SetPlaceholder("e.g. fill out tags, regroup tasks, review descriptions...")
 	m.mode = model.ModeGroupPrompt
 	return m, nil
 }
@@ -1624,7 +1834,7 @@ func (m Model) spawnGroupAction(scopeGroupID string, instruction string) (tea.Mo
 		Output:           "Processing tasks...",
 		CompletionAction: model.CompletionApplyGroupAction,
 	}
-	m.processes = append(m.processes, proc)
+	m.addProcess(&proc)
 
 	m.mode = model.ModeList
 	m.action = actionNone
@@ -1753,7 +1963,7 @@ func (m Model) spawnPlanGeneration(task *model.Task, a *agent.Agent) (tea.Model,
 			"taskTitle": task.Title,
 		},
 	}
-	m.processes = append(m.processes, proc)
+	m.addProcess(&proc)
 
 	// Set task status to planning
 	store.UpdateTask(m.projectRoot, task.ID, map[string]interface{}{"status": string(model.StatusPlanning)})
@@ -1801,7 +2011,7 @@ func (m Model) spawnGroupPlanGeneration(group *model.Group, a *agent.Agent) (tea
 		CompletionAction: model.CompletionSaveGroupPlan,
 		CompletionMeta:   map[string]string{"groupID": group.ID},
 	}
-	m.processes = append(m.processes, proc)
+	m.addProcess(&proc)
 
 	tasks := store.GetTasksForGroup(m.store, group.ID)
 	workDir := store.ResolveGroupWorkDir(m.projectRoot, m.store, group)
@@ -1851,7 +2061,7 @@ func (m Model) executeCombinePlans(taskIDs []string, name string) (tea.Model, te
 			"taskIDs":  strings.Join(taskIDs, ","),
 		},
 	}
-	m.processes = append(m.processes, proc)
+	m.addProcess(&proc)
 
 	m.mode = model.ModeList
 	m.action = actionNone
@@ -1914,7 +2124,7 @@ func (m Model) executeFollowUp(taskID, question string) (tea.Model, tea.Cmd) {
 			"hasPlanFile": fmt.Sprintf("%v", task.PlanFile != ""),
 		},
 	}
-	m.processes = append(m.processes, proc)
+	m.addProcess(&proc)
 
 	m.mode = model.ModeTaskView
 	m.action = actionNone
@@ -1991,20 +2201,18 @@ func (m Model) handleToolQuestion(msg claude.UserQuestionMsg) (tea.Model, tea.Cm
 	}
 
 	// Init chat input with question as placeholder
-	m.chatInput = ChatInputModel{
-		ProcessID:   msg.ProcessID,
-		Placeholder: msg.Question,
-	}
-	// Find the session ID from the process
+	sessionID := ""
 	for _, proc := range m.processes {
 		if proc.ID == msg.ProcessID {
-			m.chatInput.SessionID = proc.SessionID
+			sessionID = proc.SessionID
 			break
 		}
 	}
+	m.chatInput = NewChatInput(msg.ProcessID, sessionID)
+	m.chatInput.inner.Placeholder = msg.Question
 
 	m.mode = model.ModeProcessChat
-	m.scrollOffset = 999999 // Scroll to bottom
+	m.viewport.GotoBottom()
 	return m, nil
 }
 
@@ -2154,7 +2362,7 @@ func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
 		m.toolQuestionProcID = ""
 		m.toolQuestionText = ""
 		m.mode = model.ModeProcessDetail
-		m.scrollOffset = 999999
+		m.viewport.GotoBottom()
 		return m, nil
 	}
 
@@ -2171,7 +2379,7 @@ func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
 	}
 
 	m.mode = model.ModeProcessDetail
-	m.scrollOffset = 999999 // Scroll to bottom
+	m.viewport.GotoBottom()
 
 	return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, msg.ProcessID, msg.SessionID, msg.Message, m.processCancels, m.toolBridge, m.processTimeout())
 }
@@ -2241,6 +2449,7 @@ func (m Model) handleProcessAutoRemove(msg ProcessAutoRemoveMsg) (tea.Model, tea
 			m.processIdx = max(0, len(m.processes)-1)
 		}
 	}
+	m.processPaginator.SetTotalPages(len(m.processes))
 	return m, nil
 }
 
