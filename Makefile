@@ -11,6 +11,7 @@ test:
 
 install: build
 	cp $(BINARY) /opt/homebrew/bin/$(BINARY)
+	codesign -s - /opt/homebrew/bin/$(BINARY)
 
 vet:
 	$(GOBIN) vet ./...
