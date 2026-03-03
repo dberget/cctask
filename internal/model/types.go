@@ -1,6 +1,8 @@
 package model
 
-import "time"
+import (
+	"time"
+)
 
 type TaskStatus string
 
@@ -65,9 +67,20 @@ type TaskStore struct {
 }
 
 type Config struct {
-	Model  string `json:"model,omitempty"`
-	Budget int    `json:"budget,omitempty"`
-	Theme  string `json:"theme,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Budget         int    `json:"budget,omitempty"`
+	Theme          string `json:"theme,omitempty"`
+	TimeoutMinutes int    `json:"timeoutMinutes,omitempty"`
+}
+
+const DefaultTimeoutMinutes = 60
+
+// Timeout returns the configured process timeout as a time.Duration.
+func (c Config) Timeout() time.Duration {
+	if c.TimeoutMinutes > 0 {
+		return time.Duration(c.TimeoutMinutes) * time.Minute
+	}
+	return DefaultTimeoutMinutes * time.Minute
 }
 
 type ProcessStatus string

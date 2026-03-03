@@ -415,9 +415,12 @@ func GetGroupPath(s *model.TaskStore, groupID string) []model.Group {
 	return path
 }
 
-func BuildListItems(s *model.TaskStore, filter string, collapsed map[string]bool) []model.ListItem {
+func BuildListItems(s *model.TaskStore, filter string, collapsed map[string]bool, hideCompleted bool) []model.ListItem {
 	var items []model.ListItem
 	matchesFilter := func(t model.Task) bool {
+		if hideCompleted && t.Status == model.StatusDone {
+			return false
+		}
 		if filter == "" {
 			return true
 		}

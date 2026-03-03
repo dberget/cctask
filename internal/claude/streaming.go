@@ -64,21 +64,24 @@ type ChatSubmitMsg struct {
 // SpawnStreamCmd creates a tea.Cmd that runs a Claude query using the SDK,
 // streaming structured events via p.Send() and returning StreamDoneMsg on completion.
 // Extra SDK options (e.g. agent system prompt, model) can be passed via extraOpts.
-func SpawnStreamCmd(p *tea.Program, projectRoot string, procID string, prompt string, permissionMode string, cancels *ProcessCancels, toolBridge *ToolBridge, extraOpts ...claudecode.Option) tea.Cmd {
+func SpawnStreamCmd(p *tea.Program, projectRoot string, procID string, prompt string, permissionMode string, cancels *ProcessCancels, toolBridge *ToolBridge, timeout time.Duration, extraOpts ...claudecode.Option) tea.Cmd {
 	return func() tea.Msg {
-		return runStream(p, projectRoot, procID, prompt, "", permissionMode, cancels, toolBridge, extraOpts...)
+		return runStream(p, projectRoot, procID, prompt, "", permissionMode, cancels, toolBridge, timeout, extraOpts...)
 	}
 }
 
 // SpawnStreamResumeCmd creates a tea.Cmd that resumes an existing Claude session.
-func SpawnStreamResumeCmd(p *tea.Program, projectRoot string, procID string, sessionID string, prompt string, cancels *ProcessCancels, toolBridge *ToolBridge) tea.Cmd {
+func SpawnStreamResumeCmd(p *tea.Program, projectRoot string, procID string, sessionID string, prompt string, cancels *ProcessCancels, toolBridge *ToolBridge, timeout time.Duration) tea.Cmd {
 	return func() tea.Msg {
-		return runStream(p, projectRoot, procID, prompt, sessionID, "", cancels, toolBridge)
+		return runStream(p, projectRoot, procID, prompt, sessionID, "", cancels, toolBridge, timeout)
 	}
 }
 
-func runStream(p *tea.Program, projectRoot string, procID string, prompt string, sessionID string, permissionMode string, cancels *ProcessCancels, toolBridge *ToolBridge, extraOpts ...claudecode.Option) tea.Msg {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+func runStream(p *tea.Program, projectRoot string, procID string, prompt string, sessionID string, permissionMode string, cancels *ProcessCancels, toolBridge *ToolBridge, timeout time.Duration, extraOpts ...claudecode.Option) tea.Msg {
+	if timeout <= 0 {
+		timeout = 60 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	// Register so the TUI can cancel this process

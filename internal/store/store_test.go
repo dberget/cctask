@@ -182,7 +182,7 @@ func TestBuildListItems(t *testing.T) {
 	AddTask(dir, "Task 2", "", nil, "")
 	s, _ := LoadStore(dir)
 
-	items := BuildListItems(s, "", nil)
+	items := BuildListItems(s, "", nil, false)
 	if len(items) != 2 {
 		t.Errorf("expected 2 items, got %d", len(items))
 	}
@@ -192,7 +192,7 @@ func TestBuildListItems(t *testing.T) {
 	UpdateTask(dir, "t1", map[string]interface{}{"group": "project-a"})
 	s, _ = LoadStore(dir)
 
-	items = BuildListItems(s, "", nil)
+	items = BuildListItems(s, "", nil, false)
 	// Should be: All Tasks header, project header, t1 under project, t2 unassigned
 	if len(items) != 4 {
 		t.Errorf("expected 4 items (All Tasks + 1 project + 2 tasks), got %d", len(items))
@@ -202,7 +202,7 @@ func TestBuildListItems(t *testing.T) {
 	}
 
 	// Filter
-	items = BuildListItems(s, "Task 2", nil)
+	items = BuildListItems(s, "Task 2", nil, false)
 	foundTask2 := false
 	for _, item := range items {
 		if item.Task != nil && item.Task.Title == "Task 2" {
