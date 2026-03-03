@@ -189,7 +189,7 @@ func (m *FormModel) focusActive() {
 func (m FormModel) View() string {
 	var lines []string
 	lines = append(lines, styleCyanBold.Render(m.Heading))
-	lines = append(lines, styleGray.Render("Tab: next field  Enter: next/newline  Ctrl+S: save  Esc: cancel"))
+	lines = append(lines, styleGray.Render("Tab: next field  Enter: next/newline  Ctrl+S: save  Ctrl+B: browse dir  Esc: cancel"))
 	lines = append(lines, "")
 
 	labels := [fieldCount]string{"Title", "Description", "Tags", "WorkDir"}

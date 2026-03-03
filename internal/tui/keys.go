@@ -50,6 +50,9 @@ type KeyBindings struct {
 	PrevPage  key.Binding
 	NextPage  key.Binding
 
+	// Proof
+	OpenProof key.Binding
+
 	// Editor
 	EditorSave key.Binding
 
@@ -98,11 +101,12 @@ func NewKeyBindings() KeyBindings {
 		FilePick:    key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "import file")),
 		BulkAdd:     key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "bulk add")),
 
-		Cancel:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "cancel")),
-		Chat:     key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "chat")),
-		OpenFull: key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "full claude")),
-		PrevPage: key.NewBinding(key.WithKeys("["), key.WithHelp("[/]", "page")),
-		NextPage: key.NewBinding(key.WithKeys("]"), key.WithHelp("", "")),
+		Cancel:    key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "cancel")),
+		Chat:      key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "chat")),
+		OpenFull:  key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "full claude")),
+		PrevPage:  key.NewBinding(key.WithKeys("["), key.WithHelp("[/]", "page")),
+		NextPage:  key.NewBinding(key.WithKeys("]"), key.WithHelp("", "")),
+		OpenProof: key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open proof")),
 
 		EditorSave: key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("Ctrl+S", "save")),
 
@@ -159,7 +163,7 @@ func modeShortHelp(keys KeyBindings, mode model.ViewMode, selected *model.ListIt
 	case model.ModeContextView:
 		return []key.Binding{keys.Edit, keys.Back}
 	case model.ModeTaskView:
-		return []key.Binding{keys.Run, keys.Edit, keys.Plan, keys.Prompt, keys.CycleStatus, keys.Back}
+		return []key.Binding{keys.Run, keys.Edit, keys.Plan, keys.Prompt, keys.CycleStatus, keys.OpenProof, keys.Back}
 	case model.ModeHelp:
 		return []key.Binding{keys.Help, keys.Back}
 	case model.ModeTaskViewAsk, model.ModeGroupPrompt:

@@ -136,6 +136,13 @@ func planStatus(hasPlan bool) string {
 	return styleDim.Render("none")
 }
 
+func proofStatus(hasProof bool) string {
+	if hasProof {
+		return styleGreen.Render("✓ captured") + styleDim.Render("  (o to open)")
+	}
+	return styleDim.Render("pending")
+}
+
 // applyThemeToBubbles updates styles on all bubbles components after a theme change.
 // Must be called as: m = m.applyThemeToBubblesM() or inlined in the calling code.
 func applyThemeToBubbles(m *Model) {

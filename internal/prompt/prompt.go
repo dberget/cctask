@@ -435,6 +435,56 @@ func BuildGroupActionPrompt(projectRoot string, tasks []model.Task, groups []mod
 	return prependContext(projectRoot, strings.Join(lines, "\n"))
 }
 
+func BuildProofInstructions(projectRoot, taskID, preChangeCommit string) string {
+	screenshotsDir := store.ScreenshotsDir(projectRoot)
+	beforeFile := taskID + "-before.png"
+	afterFile := taskID + "-after.png"
+
+	return fmt.Sprintf(`
+## PROOF Screenshot Instructions
+
+This task is tagged with PROOF. After completing all code changes, you MUST capture before/after screenshots using the Chrome browser integration. Do NOT use screencapture or any macOS desktop capture tools.
+
+### Steps:
+1. **Complete all code changes first** — finish the implementation fully before proceeding.
+2. **Determine the target URL** — find the URL to screenshot from the task plan/description (e.g. localhost dev server page).
+3. **Screenshot the "after" state** using Chrome MCP:
+   - Start the dev server if needed
+   - Call mcp__claude-in-chrome__tabs_context_mcp to get available tabs
+   - Create a new tab with mcp__claude-in-chrome__tabs_create_mcp
+   - Navigate to the target URL with mcp__claude-in-chrome__navigate
+   - Wait briefly for the page to render (mcp__claude-in-chrome__computer action: wait, duration: 2)
+   - Take a screenshot with mcp__claude-in-chrome__computer action: screenshot
+   - Save the screenshot to: %s/%s
+   - To save the screenshot, use mcp__claude-in-chrome__javascript_tool to run:
+     document.querySelector('canvas')?.toDataURL() or capture the page via the returned image data
+   - Alternatively, use Bash to download/save the screenshot image once captured
+4. **Screenshot the "before" state** using git worktree + Chrome:
+   - Run: git worktree add /tmp/proof-worktree-%s %s
+   - Start a dev server in the worktree on a DIFFERENT port
+   - Navigate Chrome to the worktree dev server URL
+   - Take a screenshot with mcp__claude-in-chrome__computer action: screenshot
+   - Save to: %s/%s
+   - Stop the worktree dev server
+   - Clean up: git worktree remove /tmp/proof-worktree-%s
+5. **Ensure both files exist** at the paths above.
+
+### Screenshot directory: %s
+Create the directory if it doesn't exist: mkdir -p %s
+
+### Important:
+- Use png format for screenshots
+- Do NOT use screencapture or any desktop screen capture — use Chrome MCP exclusively
+- The Chrome MCP captures through the browser extension API without taking over the desktop
+- If Chrome MCP is unavailable, save placeholder text explaining what to screenshot manually
+- Always clean up the git worktree when done
+`, screenshotsDir, afterFile,
+		taskID, preChangeCommit,
+		screenshotsDir, beforeFile,
+		taskID,
+		screenshotsDir, screenshotsDir)
+}
+
 func BuildBulkAddPrompt(projectRoot string, bulkText string, groups []model.Group, groupID string) string {
 	var lines []string
 	lines = append(lines, "You are a task management assistant. Parse the following freeform text into structured tasks.")

@@ -44,6 +44,42 @@ func renderFilePickerView(fp filepicker.Model) string {
 		"\n\n" + fp.View()
 }
 
+// dirPickerResultMsg is sent when a directory is selected from the dir picker.
+type dirPickerResultMsg struct {
+	path string
+}
+
+func newDirPicker(startDir string) filepicker.Model {
+	fp := filepicker.New()
+	fp.DirAllowed = true
+	fp.FileAllowed = false
+	fp.CurrentDirectory = startDir
+	fp.ShowHidden = false
+	fp.Height = 15
+	return fp
+}
+
+func (m Model) handleDirPickerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.Type == tea.KeyEscape {
+		m.mode = model.ModeTaskForm
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.filePicker, cmd = m.filePicker.Update(msg)
+
+	if didSelect, path := m.filePicker.DidSelectFile(msg); didSelect {
+		return m, func() tea.Msg { return dirPickerResultMsg{path: path} }
+	}
+
+	return m, cmd
+}
+
+func renderDirPickerView(fp filepicker.Model) string {
+	return styleCyanBold.Render("Select Directory") + "  " + styleGray.Render("Enter: select  Esc: cancel") +
+		"\n\n" + fp.View()
+}
+
 // readFileContent reads a file and returns its content, or an error message.
 func readFileContent(path string) (string, error) {
 	data, err := os.ReadFile(path)

@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -393,6 +395,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.mode = model.ModeContextView
 		return m, flashCmd(fmt.Sprintf("Imported: %s", msg.path))
+
+	case dirPickerResultMsg:
+		m.form.workDir.SetValue(msg.path)
+		m.mode = model.ModeTaskForm
+		return m, nil
 	}
 
 	return m, nil
@@ -655,6 +662,9 @@ func (m Model) renderContent(contentHeight int) string {
 	case model.ModeFilePicker:
 		return renderFilePickerView(m.filePicker)
 
+	case model.ModeFormDirPicker:
+		return renderDirPickerView(m.filePicker)
+
 	default:
 		return m.renderListView()
 	}
@@ -708,8 +718,29 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case model.ModeTaskForm:
+		// Ctrl+B on WorkDir field opens directory picker
+		if msg.Type == tea.KeyCtrlB && m.form.Active == fieldWorkDir {
+			startDir := m.projectRoot
+			if v := m.form.workDir.Value(); v != "" {
+				startDir = v
+			}
+			m.filePicker = newDirPicker(startDir)
+			m.mode = model.ModeFormDirPicker
+			return m, m.filePicker.Init()
+		}
+		prevActive := m.form.Active
 		var cmd tea.Cmd
 		m.form, cmd = m.form.Update(msg)
+		// Auto-open dir picker when tabbing into WorkDir field
+		if m.form.Active == fieldWorkDir && prevActive != fieldWorkDir {
+			startDir := m.projectRoot
+			if v := m.form.workDir.Value(); v != "" {
+				startDir = v
+			}
+			m.filePicker = newDirPicker(startDir)
+			m.mode = model.ModeFormDirPicker
+			return m, m.filePicker.Init()
+		}
 		return m, cmd
 
 	case model.ModeAddToGroup, model.ModeThemePicker, model.ModeAgentPicker:
@@ -748,6 +779,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case model.ModeFilePicker:
 		return m.handleFilePickerKey(msg)
+
+	case model.ModeFormDirPicker:
+		return m.handleDirPickerKey(msg)
 	}
 
 	return m.handleNavKey(msg)
@@ -984,16 +1018,39 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if key.Matches(msg, m.keys.OpenProof) && (m.mode == model.ModeTaskView || m.mode == model.ModeList || m.mode == model.ModeDetail) {
+		if t := m.selectedTask(); t != nil && t.IsProof() {
+			if store.ProofExists(m.projectRoot, t) {
+				if err := openProofInBrowser(m.projectRoot, t); err != nil {
+					return m, flashCmd("Error opening proof: " + err.Error())
+				}
+				return m, flashCmd("Opening proof comparison...")
+			}
+			return m, flashCmd("No proof screenshots yet")
+		}
+	}
+
 	if key.Matches(msg, m.keys.Cancel) && m.processIdx < len(m.processes) {
 		if m.focusPanel == model.FocusProcesses || m.mode == model.ModeProcessDetail {
 			proc := &m.processes[m.processIdx]
 			if proc.Status == model.ProcessRunning {
 				if m.processCancels.Cancel(proc.ID) {
-					return m, flashCmd("Cancelling " + proc.Label + "...")
+					return m, flashCmd("Interrupting " + proc.Label + "...")
 				}
 				return m, flashCmd("Could not cancel process")
 			}
-			return m, flashCmd("Process is not running")
+			// Remove non-running processes from the list
+			m.processes = append(m.processes[:m.processIdx], m.processes[m.processIdx+1:]...)
+			if m.processIdx >= len(m.processes) {
+				m.processIdx = len(m.processes) - 1
+			}
+			if m.mode == model.ModeProcessDetail {
+				m.mode = model.ModeList
+			}
+			if len(m.processes) == 0 {
+				m.focusPanel = model.FocusMain
+			}
+			return m, flashCmd("Removed process")
 		}
 	}
 
@@ -1010,7 +1067,11 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Chat) && m.mode == model.ModeProcessDetail && m.processIdx < len(m.processes) {
 		proc := &m.processes[m.processIdx]
 		if proc.Status == model.ProcessRunning {
-			return m, flashCmd("Wait for Claude to finish")
+			// Allow queuing a message while running — it will auto-send when the turn completes
+			m.chatInput = NewChatInput(proc.ID, proc.SessionID)
+			m.chatInput.inner.Placeholder = "Queue message (sent when turn completes)..."
+			m.mode = model.ModeProcessChat
+			return m, nil
 		}
 		if proc.SessionID == "" {
 			return m, flashCmd("No session — can't follow up")
@@ -1674,15 +1735,25 @@ func (m Model) executeRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 	)
 }
 
+func captureHeadCommit(workDir string) string {
+	out, err := exec.Command("git", "-C", workDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func (m Model) spawnBackgroundRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 	var title, id, promptText string
 	var workDir string
 	isTask := false
+	isProof := false
 
 	if t := m.selectedTask(); t != nil {
 		title = t.Title
 		id = t.ID
 		isTask = true
+		isProof = t.IsProof()
 		promptText = prompt.BuildTaskPrompt(m.projectRoot, t)
 		workDir = store.ResolveWorkDir(m.projectRoot, m.store, t)
 	} else if g := m.selectedGroup(); g != nil {
@@ -1711,6 +1782,14 @@ func (m Model) spawnBackgroundRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 	if isTask {
 		proc.CompletionAction = model.CompletionRunTask
 		proc.CompletionMeta = map[string]string{"taskID": id}
+
+		if isProof {
+			preChangeCommit := captureHeadCommit(workDir)
+			proc.CompletionMeta["isProof"] = "true"
+			proc.CompletionMeta["preChangeCommit"] = preChangeCommit
+			promptText += "\n\n" + prompt.BuildProofInstructions(m.projectRoot, id, preChangeCommit)
+		}
+
 		store.UpdateTask(m.projectRoot, id, map[string]interface{}{"status": string(model.StatusInProgress)})
 		m.reload()
 	}
@@ -1718,9 +1797,14 @@ func (m Model) spawnBackgroundRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 
 	promptText += "\n\n" + prompt.McpToolGuidanceRun
 
+	extraOpts := agentSDKOpts(a)
+	if isProof {
+		extraOpts = append(extraOpts, claudecode.WithModel("sonnet"))
+	}
+
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "bypassPermissions", m.processCancels, m.toolBridge, m.processTimeout(), agentSDKOpts(a)...)
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "bypassPermissions", m.processCancels, m.toolBridge, m.processTimeout(), extraOpts...)
 	} else {
 		return m, flashCmd("Streaming not available (no program ref)")
 	}
@@ -2412,6 +2496,15 @@ func (m Model) handleStreamDone(msg claude.StreamDoneMsg) (tea.Model, tea.Cmd) {
 		delete(m.runningLabels, proc.Label)
 
 		if msg.Err != nil {
+			// If cancelled but has a session ID, treat as interruptible — go to waiting
+			if proc.SessionID != "" && (errors.Is(msg.Err, context.Canceled) || errors.Is(msg.Err, context.DeadlineExceeded)) {
+				proc.Status = model.ProcessWaiting
+				proc.Events = append(proc.Events, model.StreamEvent{
+					Kind: model.EventSystem,
+					Text: "⏸ Interrupted — press c to resume with guidance",
+				})
+				break
+			}
 			proc.Status = model.ProcessError
 			proc.Output = "Error: " + msg.Err.Error()
 			proc.Events = append(proc.Events, model.StreamEvent{
@@ -2432,6 +2525,19 @@ func (m Model) handleStreamDone(msg claude.StreamDoneMsg) (tea.Model, tea.Cmd) {
 
 		// Run completion action
 		m.runCompletionAction(proc, msg.FinalText)
+
+		// If there's a queued message, auto-send it as a follow-up
+		if proc.QueuedMessage != "" && msg.SessionID != "" {
+			queuedMsg := proc.QueuedMessage
+			proc.QueuedMessage = ""
+			proc.Events = append(proc.Events, model.StreamEvent{
+				Kind: model.EventUserMsg,
+				Text: queuedMsg,
+			})
+			proc.Status = model.ProcessRunning
+			m.reload()
+			return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, proc.ID, msg.SessionID, queuedMsg, m.processCancels, m.toolBridge, m.processTimeout())
+		}
 
 		// Set status: interactive processes wait for follow-up, others are done
 		if proc.IsInteractive {
@@ -2527,7 +2633,21 @@ func (m *Model) runCompletionAction(proc *model.ClaudeProcess, finalText string)
 	case model.CompletionRunTask:
 		taskID := meta["taskID"]
 		if taskID != "" {
-			store.UpdateTask(projectRoot, taskID, map[string]interface{}{"status": string(model.StatusDone)})
+			updates := map[string]interface{}{"status": string(model.StatusDone)}
+
+			if meta["isProof"] == "true" {
+				beforeFile := taskID + "-before.png"
+				afterFile := taskID + "-after.png"
+				dir := store.ScreenshotsDir(projectRoot)
+				if _, err := os.Stat(filepath.Join(dir, beforeFile)); err == nil {
+					updates["proofBefore"] = beforeFile
+				}
+				if _, err := os.Stat(filepath.Join(dir, afterFile)); err == nil {
+					updates["proofAfter"] = afterFile
+				}
+			}
+
+			store.UpdateTask(projectRoot, taskID, updates)
 		}
 
 	case model.CompletionApplyBulkAdd:
@@ -2555,6 +2675,21 @@ func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
 		m.mode = model.ModeProcessDetail
 		m.viewport.GotoBottom()
 		return m, nil
+	}
+
+	// If process is still running, queue the message for when the turn completes
+	for i := range m.processes {
+		if m.processes[i].ID == msg.ProcessID && m.processes[i].Status == model.ProcessRunning {
+			m.processes[i].QueuedMessage = msg.Message
+			m.processes[i].Events = append(m.processes[i].Events, model.StreamEvent{
+				Kind: model.EventSystem,
+				Text: "📨 Message queued: " + msg.Message,
+			})
+			m.processAutoScroll = true
+			m.mode = model.ModeProcessDetail
+			m.viewport.GotoBottom()
+			return m, flashCmd("Message queued — will send when turn completes")
+		}
 	}
 
 	// Normal follow-up: append user message event and resume session

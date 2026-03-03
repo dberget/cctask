@@ -12,11 +12,12 @@ import (
 )
 
 const (
-	cctaskDirName = ".cctask"
-	tasksFileName = "tasks.json"
-	plansDirName  = "plans"
-	configFileName = "config.json"
-	logsDirName   = "logs"
+	cctaskDirName      = ".cctask"
+	tasksFileName      = "tasks.json"
+	plansDirName       = "plans"
+	configFileName     = "config.json"
+	logsDirName        = "logs"
+	screenshotsDirName = "screenshots"
 )
 
 func FindProjectRoot(startDir string) string {
@@ -51,6 +52,10 @@ func PlansDir(projectRoot string) string {
 
 func LogsDir(projectRoot string) string {
 	return filepath.Join(CctaskDir(projectRoot), logsDirName)
+}
+
+func ScreenshotsDir(projectRoot string) string {
+	return filepath.Join(CctaskDir(projectRoot), screenshotsDirName)
 }
 
 func ConfigPath(projectRoot string) string {
@@ -227,6 +232,14 @@ func UpdateTask(projectRoot string, id string, updates map[string]interface{}) (
 		case "mergedInto":
 			if val, ok := v.(string); ok {
 				task.MergedInto = val
+			}
+		case "proofBefore":
+			if val, ok := v.(string); ok {
+				task.ProofBefore = val
+			}
+		case "proofAfter":
+			if val, ok := v.(string); ok {
+				task.ProofAfter = val
 			}
 		}
 	}
@@ -624,6 +637,21 @@ func tagsContain(tags []string, query string) bool {
 		}
 	}
 	return false
+}
+
+// ProofExists returns true if both before and after screenshot files exist on disk.
+func ProofExists(projectRoot string, task *model.Task) bool {
+	if task.ProofBefore == "" || task.ProofAfter == "" {
+		return false
+	}
+	dir := ScreenshotsDir(projectRoot)
+	if _, err := os.Stat(filepath.Join(dir, task.ProofBefore)); err != nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(dir, task.ProofAfter)); err != nil {
+		return false
+	}
+	return true
 }
 
 func filterGroupTasks(s *model.TaskStore, groupID string, matches func(model.Task) bool) []model.Task {

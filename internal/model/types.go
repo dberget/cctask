@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strings"
 	"time"
 )
 
@@ -39,8 +40,31 @@ type Task struct {
 	WorkDir     string     `json:"workDir,omitempty"`
 	PlanFile    string     `json:"planFile,omitempty"`
 	MergedInto  string     `json:"mergedInto,omitempty"`
+	ProofBefore string     `json:"proofBefore,omitempty"`
+	ProofAfter  string     `json:"proofAfter,omitempty"`
 	Created     string     `json:"created"`
 	Updated     string     `json:"updated"`
+}
+
+// HasTag returns true if the task has the given tag (case-insensitive).
+func (t Task) HasTag(tag string) bool {
+	tag = strings.ToLower(tag)
+	for _, tt := range t.Tags {
+		if strings.ToLower(tt) == tag {
+			return true
+		}
+	}
+	return false
+}
+
+// IsProof returns true if the task is tagged with "PROOF".
+func (t Task) IsProof() bool {
+	return t.HasTag("PROOF")
+}
+
+// HasProof returns true if both proof screenshot paths are set.
+func (t Task) HasProof() bool {
+	return t.ProofBefore != "" && t.ProofAfter != ""
 }
 
 type Group struct {
@@ -149,6 +173,7 @@ type ClaudeProcess struct {
 	CompletionMeta   map[string]string // Context for completion handler (taskID, groupID, planFile, etc.)
 	TurnCount        int
 	CostUSD          float64
+	QueuedMessage    string // Message queued while process is running, auto-sent on turn completion
 }
 
 func Now() string {

@@ -77,11 +77,20 @@ func renderRichProcessDetail(proc *model.ClaudeProcess, width int) string {
 		}
 	}
 
+	// Queued message indicator
+	if proc.QueuedMessage != "" {
+		lines = append(lines, "")
+		lines = append(lines, styleYellow.Render("📨 Queued: ")+styleDim.Render(truncate(proc.QueuedMessage, width-12)))
+	}
+
 	// Footer hints
 	lines = append(lines, "")
 	var hints []string
 	if proc.Status == model.ProcessRunning {
-		hints = append(hints, keyHint("x", "cancel"))
+		hints = append(hints, keyHint("x", "interrupt"))
+		hints = append(hints, keyHint("c", "queue message"))
+	} else {
+		hints = append(hints, keyHint("x", "remove"))
 	}
 	if proc.Status == model.ProcessWaiting && proc.SessionID != "" {
 		hints = append(hints, keyHint("c", "follow-up"))

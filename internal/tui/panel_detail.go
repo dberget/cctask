@@ -98,6 +98,10 @@ func renderTaskDetail(task *model.Task, projectRoot string, width int) string {
 		lines = append(lines, styleGray.Render(padRight("WorkDir:", 10))+task.WorkDir)
 	}
 	lines = append(lines, styleGray.Render(padRight("Plan:", 10))+planStatus(hasPlan))
+	if task.IsProof() {
+		hasProof := store.ProofExists(projectRoot, task)
+		lines = append(lines, styleGray.Render(padRight("Proof:", 10))+proofStatus(hasProof))
+	}
 	if task.MergedInto != "" {
 		lines = append(lines, styleGray.Render(padRight("Merged:", 10))+styleDim.Render("into "+task.MergedInto))
 	}
