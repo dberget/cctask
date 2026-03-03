@@ -47,7 +47,7 @@ func listLineForIndex(s *model.TaskStore, items []model.ListItem, targetIndex in
 	return lineNum
 }
 
-func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListItem, selectedIndex int, isFocused bool, height int, collapsed map[string]bool, scrollOffset int) string {
+func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListItem, selectedIndex int, isFocused bool, height int, collapsed map[string]bool, scrollOffset int, spinnerFrame string) string {
 	hasProjects := len(s.Groups) > 0
 
 	titleColor := colorWhite
@@ -171,17 +171,17 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 				idStyle = styleDim
 			}
 
+			// Use spinner frame for planning tasks instead of static icon
+			icon := statusIcon(string(task.Status))
+			if task.Status == model.StatusPlanning {
+				icon = styleMagenta.Render(spinnerFrame)
+			}
+
 			line := lipgloss.NewStyle().Foreground(nameColor).Render(indent) +
 				idStyle.Render(padRight(task.ID, 5)) +
 				lipgloss.NewStyle().Foreground(nameColor).Render(truncate(task.Title, nameWidth)) +
-				"  " + statusIcon(string(task.Status)) +
+				"  " + icon +
 				planMark
-			switch task.Status {
-			case model.StatusPlanning:
-				line = lipgloss.NewStyle().Background(colorPlanningBg).Render(padRight(line, listPanelWidth))
-			case model.StatusInProgress:
-				line = lipgloss.NewStyle().Background(colorInProgressBg).Render(padRight(line, listPanelWidth))
-			}
 			lines = append(lines, line)
 		}
 	}

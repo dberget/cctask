@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/davidberget/cctask-go/internal/agent"
@@ -109,6 +110,9 @@ type Model struct {
 	// Vim gg state
 	pendingG bool
 
+	// Spinner for planning/running tasks
+	spinner spinner.Model
+
 	// Program reference for streaming processes
 	program *tea.Program
 
@@ -132,6 +136,13 @@ func NewModel(projectRoot string) Model {
 		ApplyTheme(cfg.Theme)
 	}
 
+	sp := spinner.New()
+	sp.Spinner = spinner.Spinner{
+		Frames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
+		FPS:    80 * time.Millisecond,
+	}
+	sp.Style = styleMagenta
+
 	m := Model{
 		projectRoot:     projectRoot,
 		store:           s,
@@ -144,6 +155,7 @@ func NewModel(projectRoot string) Model {
 		width:           80,
 		height:          24,
 		agents:          agent.LoadAgents(projectRoot),
+		spinner:         sp,
 	}
 	m.rebuildList()
 	return m
@@ -167,9 +179,12 @@ func Run(projectRoot string) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return func() tea.Msg {
-		return programReadyMsg{p: programRef}
-	}
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			return programReadyMsg{p: programRef}
+		},
+	)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -178,6 +193,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.program = msg.p
 		m.toolBridge.Program = msg.p
 		return m, nil
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -484,7 +504,7 @@ func (m Model) renderListView() string {
 
 	listHeight := m.height - 8
 	listPanel := renderListPanel(m.store, m.projectRoot, m.listItems, m.listIndex,
-		m.focusPanel == model.FocusMain, listHeight, m.collapsedGroups, m.listScrollOffset)
+		m.focusPanel == model.FocusMain, listHeight, m.collapsedGroups, m.listScrollOffset, m.spinner.View())
 
 	detailWidth := m.width - listPanelWidth - separatorWidth*2 - 4
 	if hasProcesses {
