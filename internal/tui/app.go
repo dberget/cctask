@@ -496,7 +496,7 @@ func (m *Model) reload() {
 				break
 			}
 		}
-		if !running || hasPlan {
+		if !running && hasPlan {
 			store.UpdateTask(m.projectRoot, s.Tasks[i].ID, map[string]interface{}{
 				"status": string(model.StatusPending),
 			})
@@ -844,6 +844,31 @@ func (m Model) isFullscreenMode() bool {
 	return false
 }
 
+// syncViewportContent sets the viewport content for the current fullscreen mode
+// so that scroll operations in Update have accurate line counts.
+func (m *Model) syncViewportContent() {
+	switch m.mode {
+	case model.ModePlan:
+		m.viewport.SetContent(renderPlanView(m.projectRoot, m.selectedTask(), m.selectedGroup(), m.width-8))
+	case model.ModeTaskView:
+		if t := m.selectedTask(); t != nil {
+			m.viewport.SetContent(renderTaskView(t, m.projectRoot, m.width-8))
+		}
+	case model.ModeGroupDetail:
+		if g := m.selectedGroup(); g != nil {
+			m.viewport.SetContent(renderGroupView(g, m.store, m.projectRoot, m.groupProgress))
+		}
+	case model.ModeProcessDetail, model.ModeProcessChat:
+		if m.processIdx < len(m.processes) {
+			m.viewport.SetContent(renderRichProcessDetail(&m.processes[m.processIdx], m.width-8))
+		}
+	case model.ModeContextView:
+		m.viewport.SetContent(renderContextView(m.projectRoot))
+	case model.ModeHelp:
+		m.viewport.SetContent(renderHelp(m.helpModel, m.keys))
+	}
+}
+
 func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	k := msg.String()
 
@@ -874,6 +899,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Scroll in fullscreen views (including help) via viewport
 	if m.isFullscreenMode() {
+		m.syncViewportContent()
 		isProcess := m.mode == model.ModeProcessDetail || m.mode == model.ModeProcessChat
 		halfPage := max(1, m.viewport.Height/2)
 		switch {
