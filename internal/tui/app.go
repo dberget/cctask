@@ -221,8 +221,13 @@ func Run(projectRoot string) {
 	m := NewModel(projectRoot)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	programRef = p
-	if _, err := p.Run(); err != nil {
+	finalModel, err := p.Run()
+	if err != nil {
 		fmt.Printf("Error: %v\n", err)
+	}
+	// Give SDK goroutines time to clean up subprocess after context cancellation.
+	if fm, ok := finalModel.(Model); ok && fm.processCancels.HasRunning() {
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
@@ -878,6 +883,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if k == "ctrl+c" || (key.Matches(msg, m.keys.Quit) && m.mode == model.ModeList) {
+		m.processCancels.CancelAll()
 		return m, tea.Quit
 	}
 

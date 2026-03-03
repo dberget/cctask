@@ -37,6 +37,25 @@ func (pc *ProcessCancels) Remove(procID string) {
 	pc.m.Delete(procID)
 }
 
+// CancelAll cancels every registered process.
+func (pc *ProcessCancels) CancelAll() {
+	pc.m.Range(func(key, value any) bool {
+		value.(context.CancelFunc)()
+		pc.m.Delete(key)
+		return true
+	})
+}
+
+// HasRunning returns true if any processes are registered.
+func (pc *ProcessCancels) HasRunning() bool {
+	running := false
+	pc.m.Range(func(_, _ any) bool {
+		running = true
+		return false // stop iteration
+	})
+	return running
+}
+
 // StreamEventMsg delivers a single structured event to the TUI.
 type StreamEventMsg struct {
 	ProcessID string
