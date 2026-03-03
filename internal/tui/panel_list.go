@@ -176,6 +176,12 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 				lipgloss.NewStyle().Foreground(nameColor).Render(truncate(task.Title, nameWidth)) +
 				"  " + statusIcon(string(task.Status)) +
 				planMark
+			switch task.Status {
+			case model.StatusPlanning:
+				line = lipgloss.NewStyle().Background(colorPlanningBg).Render(padRight(line, listPanelWidth))
+			case model.StatusInProgress:
+				line = lipgloss.NewStyle().Background(colorInProgressBg).Render(padRight(line, listPanelWidth))
+			}
 			lines = append(lines, line)
 		}
 	}

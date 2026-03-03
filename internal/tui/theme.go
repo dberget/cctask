@@ -54,6 +54,9 @@ var (
 			Background(colorBright).
 			Foreground(lipgloss.Color("#111827"))
 
+	colorPlanningBg    = lipgloss.Color("#2D1B4E") // subtle dark purple background
+	colorInProgressBg  = lipgloss.Color("#1B2E4E") // subtle dark blue background
+
 	styleBorder = lipgloss.NewStyle().
 			BorderStyle(lipgloss.RoundedBorder()).
 			BorderForeground(colorBorder)

@@ -116,6 +116,7 @@ func listHints(sel *model.ListItem) []string {
 		h = append(h, keyHint("v", "view plan"))
 	}
 	h = append(h, keyHint("m", "merge"))
+	h = append(h, keyHint("H", "hide done"))
 	if hasSelection {
 		h = append(h, keyHint("Enter", "detail"))
 	}
@@ -148,6 +149,7 @@ func renderHelp() string {
 	lines = append(lines, k("m", "Merge plans"))
 	lines = append(lines, k("x", "View/edit project context"))
 	lines = append(lines, k("/", "Filter tasks"))
+	lines = append(lines, k("H", "Toggle hide completed"))
 	lines = append(lines, k("t", "Change theme"))
 	lines = append(lines, k("Space", "Collapse / expand group"))
 	lines = append(lines, k("Tab", "Switch to process panel"))

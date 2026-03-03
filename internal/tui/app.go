@@ -53,7 +53,8 @@ type Model struct {
 	focusPanel  model.FocusPanel
 	listIndex   int
 	processIdx  int
-	filter      string
+	filter        string
+	hideCompleted bool
 	message     string
 	width       int
 	height      int
@@ -135,6 +136,7 @@ func NewModel(projectRoot string) Model {
 		projectRoot:     projectRoot,
 		store:           s,
 		mode:            model.ModeList,
+		hideCompleted:   true,
 		collapsedGroups: make(map[string]bool),
 		runningLabels:   make(map[string]bool),
 		processCancels:  &claude.ProcessCancels{},
@@ -145,6 +147,12 @@ func NewModel(projectRoot string) Model {
 	}
 	m.rebuildList()
 	return m
+}
+
+// processTimeout returns the configured process timeout duration.
+func (m Model) processTimeout() time.Duration {
+	cfg := store.LoadConfig(m.projectRoot)
+	return cfg.Timeout()
 }
 
 var programRef *tea.Program
@@ -335,7 +343,7 @@ func (m *Model) reload() {
 }
 
 func (m *Model) rebuildList() {
-	m.listItems = store.BuildListItems(m.store, m.filter, m.collapsedGroups)
+	m.listItems = store.BuildListItems(m.store, m.filter, m.collapsedGroups, m.hideCompleted)
 	if m.listIndex >= len(m.listItems) && len(m.listItems) > 0 {
 		m.listIndex = len(m.listItems) - 1
 	}
@@ -775,6 +783,15 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if key == "H" && m.mode == model.ModeList {
+		m.hideCompleted = !m.hideCompleted
+		m.rebuildList()
+		if m.hideCompleted {
+			return m, flashCmd("Hiding completed tasks")
+		}
+		return m, flashCmd("Showing all tasks")
+	}
+
 	if key == "m" && m.mode == model.ModeList {
 		return m.handleCombine()
 	}
@@ -1099,7 +1116,7 @@ func (m Model) handleEdit() (tea.Model, tea.Cmd) {
 	}
 
 	if t := m.selectedTask(); t != nil {
-		if t.PlanFile != "" {
+		if m.mode == model.ModeTaskView && t.PlanFile != "" {
 			content, _ := store.LoadPlan(m.projectRoot, t.PlanFile)
 			title := fmt.Sprintf("Edit Plan — %s: %s", t.ID, t.Title)
 			m.action = actionEditPlanContent
@@ -1230,6 +1247,8 @@ func (m Model) executeRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 	var systemPrompt string
 	if t := m.selectedTask(); t != nil {
 		systemPrompt = prompt.BuildTaskPrompt(m.projectRoot, t)
+		store.UpdateTask(m.projectRoot, t.ID, map[string]interface{}{"status": string(model.StatusInProgress)})
+		m.reload()
 	} else if g := m.selectedGroup(); g != nil {
 		systemPrompt = prompt.BuildGroupPrompt(m.projectRoot, g, m.store)
 	} else {
@@ -1287,7 +1306,7 @@ func (m Model) spawnBackgroundRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "bypassPermissions", m.processCancels, m.toolBridge, agentSDKOpts(a)...)
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "bypassPermissions", m.processCancels, m.toolBridge, m.processTimeout(), agentSDKOpts(a)...)
 	} else {
 		return m, flashCmd("Streaming not available (no program ref)")
 	}
@@ -1574,7 +1593,7 @@ func (m Model) spawnGroupAction(scopeGroupID string, instruction string) (tea.Mo
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge)
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout())
 	} else {
 		projectRoot := m.projectRoot
 		cmd = func() tea.Msg {
@@ -1704,7 +1723,7 @@ func (m Model) spawnPlanGeneration(task *model.Task, a *agent.Agent) (tea.Model,
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, agentSDKOpts(a)...)
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout(), agentSDKOpts(a)...)
 	} else {
 		projectRoot := m.projectRoot
 		taskID := task.ID
@@ -1748,7 +1767,7 @@ func (m Model) spawnGroupPlanGeneration(group *model.Group, a *agent.Agent) (tea
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, agentSDKOpts(a)...)
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout(), agentSDKOpts(a)...)
 	} else {
 		projectRoot := m.projectRoot
 		groupID := group.ID
@@ -1805,7 +1824,7 @@ func (m Model) executeCombinePlans(taskIDs []string, name string) (tea.Model, te
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, nil)
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, nil, m.processTimeout())
 	} else {
 		projectRoot := m.projectRoot
 		planName := name
@@ -1859,7 +1878,7 @@ func (m Model) executeFollowUp(taskID, question string) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge)
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout())
 	} else {
 		projectRoot := m.projectRoot
 		hasPlanFile := task.PlanFile != ""
@@ -2111,7 +2130,7 @@ func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
 	m.mode = model.ModeProcessDetail
 	m.scrollOffset = 999999 // Scroll to bottom
 
-	return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, msg.ProcessID, msg.SessionID, msg.Message, m.processCancels, m.toolBridge)
+	return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, msg.ProcessID, msg.SessionID, msg.Message, m.processCancels, m.toolBridge, m.processTimeout())
 }
 
 func (m Model) handleProcessDone(msg claude.ProcessDoneMsg) (tea.Model, tea.Cmd) {
@@ -2143,6 +2162,13 @@ func (m Model) handleProcessDone(msg claude.ProcessDoneMsg) (tea.Model, tea.Cmd)
 }
 
 func (m Model) handleProcessAutoRemove(msg ProcessAutoRemoveMsg) (tea.Model, tea.Cmd) {
+	// Remember the ID of the currently selected process so we can
+	// re-locate it after the slice changes.
+	var selectedID string
+	if m.processIdx < len(m.processes) {
+		selectedID = m.processes[m.processIdx].ID
+	}
+
 	var newProcs []model.ClaudeProcess
 	for _, p := range m.processes {
 		if p.ID != msg.ID {
@@ -2156,8 +2182,21 @@ func (m Model) handleProcessAutoRemove(msg ProcessAutoRemoveMsg) (tea.Model, tea
 			m.mode = model.ModeList
 		}
 	}
-	if m.processIdx >= len(m.processes) {
-		m.processIdx = max(0, len(m.processes)-1)
+
+	// Re-locate the previously selected process by ID.
+	found := false
+	for i, p := range m.processes {
+		if p.ID == selectedID {
+			m.processIdx = i
+			found = true
+			break
+		}
+	}
+	if !found {
+		// Selected process was the one removed — clamp index.
+		if m.processIdx >= len(m.processes) {
+			m.processIdx = max(0, len(m.processes)-1)
+		}
 	}
 	return m, nil
 }
