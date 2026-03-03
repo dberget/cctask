@@ -46,6 +46,7 @@ func renderHelp(h help.Model, keys KeyBindings) string {
 	lines = append(lines, k("Enter", "Open detail / group view"))
 	lines = append(lines, k("v", "Full-screen task view"))
 	lines = append(lines, k("a", "Add new task"))
+	lines = append(lines, k("A", "Bulk add tasks (paste list, Claude parses)"))
 	lines = append(lines, k("e", "Edit task / plan"))
 	lines = append(lines, k("d", "Delete task / project"))
 	lines = append(lines, k("s", "Cycle status"))

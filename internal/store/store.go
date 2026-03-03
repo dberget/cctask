@@ -306,6 +306,19 @@ func AddGroupWithParent(projectRoot string, name string, description string, par
 	return &group, nil
 }
 
+func RenameGroup(projectRoot string, id string, newName string) error {
+	s, err := LoadStore(projectRoot)
+	if err != nil {
+		return err
+	}
+	idx := findGroupIndex(s, id)
+	if idx == -1 {
+		return fmt.Errorf("group %s not found", id)
+	}
+	s.Groups[idx].Name = newName
+	return SaveStore(projectRoot, s)
+}
+
 func DeleteGroup(projectRoot string, id string) error {
 	s, err := LoadStore(projectRoot)
 	if err != nil {

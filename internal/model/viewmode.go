@@ -31,6 +31,7 @@ const (
 	ModeTableView
 	ModeAllTasksList
 	ModeFilePicker
+	ModeBulkAdd
 )
 
 func (m ViewMode) String() string {
@@ -91,6 +92,8 @@ func (m ViewMode) String() string {
 		return "all-tasks-list"
 	case ModeFilePicker:
 		return "file-picker"
+	case ModeBulkAdd:
+		return "bulk-add"
 	default:
 		return "unknown"
 	}

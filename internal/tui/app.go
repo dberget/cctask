@@ -55,6 +55,8 @@ const (
 	actionAgentRun
 	actionRunMode
 	actionRegenPlan
+	actionRenameGroup
+	actionBulkAdd
 )
 
 type Model struct {
@@ -109,7 +111,8 @@ type Model struct {
 	collapsedGroups map[string]bool
 
 	// Viewport for fullscreen view scrolling
-	viewport viewport.Model
+	viewport          viewport.Model
+	processAutoScroll bool // pin process detail to bottom while streaming
 
 	// Scroll offset for list panel
 	listScrollOffset int
@@ -214,7 +217,7 @@ var programRef *tea.Program
 
 func Run(projectRoot string) {
 	m := NewModel(projectRoot)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	programRef = p
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Error: %v\n", err)
@@ -259,11 +262,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.viewport.Width = msg.Width - 4 // account for padding
 		m.viewport.Height = vpHeight
-		if m.mode == model.ModeEditPlan {
+		if m.mode == model.ModeEditPlan || m.mode == model.ModeBulkAdd {
 			m.editor.VH = msg.Height - 10
 			m.editor.VW = msg.Width - 12
 		}
 		return m, nil
+
+	case tea.MouseMsg:
+		switch m.mode {
+		case model.ModeEditPlan, model.ModeEditContext, model.ModeBulkAdd:
+			var cmd tea.Cmd
+			m.editor, cmd = m.editor.UpdateMouse(msg)
+			return m, cmd
+		default:
+			var cmd tea.Cmd
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -318,6 +333,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toolQuestionProcID = ""
 			m.toolQuestionText = ""
 		}
+		m.processAutoScroll = true
 		m.mode = model.ModeProcessDetail
 		return m, nil
 
@@ -457,6 +473,30 @@ func processElapsed(proc *model.ClaudeProcess) string {
 func (m *Model) reload() {
 	s, _ := store.LoadStore(m.projectRoot)
 	m.store = s
+
+	// Fix stuck "planning" tasks: if plan exists but no process is running, revert to pending
+	for i := range s.Tasks {
+		if s.Tasks[i].Status != model.StatusPlanning {
+			continue
+		}
+		hasPlan := s.Tasks[i].PlanFile != "" && store.PlanExists(m.projectRoot, s.Tasks[i].PlanFile)
+		running := false
+		for _, p := range m.processes {
+			if p.CompletionAction == model.CompletionSavePlan &&
+				p.CompletionMeta["taskID"] == s.Tasks[i].ID &&
+				p.Status == model.ProcessRunning {
+				running = true
+				break
+			}
+		}
+		if !running || hasPlan {
+			store.UpdateTask(m.projectRoot, s.Tasks[i].ID, map[string]interface{}{
+				"status": string(model.StatusPending),
+			})
+			s.Tasks[i].Status = model.StatusPending
+		}
+	}
+
 	m.rebuildList()
 }
 
@@ -549,7 +589,7 @@ func (m Model) renderContent(contentHeight int) string {
 	case model.ModeConfirmDelete:
 		return styleYellow.Render(m.confirmMsg) + " " + styleGray.Render("(y/n)")
 
-	case model.ModeEditPlan, model.ModeEditContext:
+	case model.ModeEditPlan, model.ModeEditContext, model.ModeBulkAdd:
 		return m.editor.View()
 
 	case model.ModePlan:
@@ -576,7 +616,11 @@ func (m Model) renderContent(contentHeight int) string {
 	case model.ModeProcessDetail:
 		if m.processIdx < len(m.processes) {
 			content := renderRichProcessDetail(&m.processes[m.processIdx], m.width-8)
+			wasAtBottom := m.viewport.AtBottom()
 			m.viewport.SetContent(content)
+			if m.processAutoScroll || wasAtBottom {
+				m.viewport.GotoBottom()
+			}
 			return m.viewport.View()
 		}
 		return ""
@@ -584,7 +628,11 @@ func (m Model) renderContent(contentHeight int) string {
 	case model.ModeProcessChat:
 		if m.processIdx < len(m.processes) {
 			content := renderRichProcessDetail(&m.processes[m.processIdx], m.width-8)
+			wasAtBottom := m.viewport.AtBottom()
 			m.viewport.SetContent(content)
+			if m.processAutoScroll || wasAtBottom {
+				m.viewport.GotoBottom()
+			}
 			return m.viewport.View() + "\n" + m.chatInput.View()
 		}
 		return ""
@@ -682,7 +730,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case model.ModeConfirmDelete:
 		return m.handleConfirm(msg)
 
-	case model.ModeEditPlan, model.ModeEditContext:
+	case model.ModeEditPlan, model.ModeEditContext, model.ModeBulkAdd:
 		var cmd tea.Cmd
 		m.editor, cmd = m.editor.Update(msg)
 		return m, cmd
@@ -792,27 +840,46 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// Scroll in fullscreen views (including help) via viewport
 	if m.isFullscreenMode() {
+		isProcess := m.mode == model.ModeProcessDetail || m.mode == model.ModeProcessChat
 		halfPage := max(1, m.viewport.Height/2)
 		switch {
 		case key.Matches(msg, m.keys.ScrollDown):
 			m.viewport.LineDown(1)
+			if isProcess && !m.viewport.AtBottom() {
+				m.processAutoScroll = false
+			}
 			return m, nil
 		case key.Matches(msg, m.keys.ScrollUp):
 			m.viewport.LineUp(1)
+			if isProcess {
+				m.processAutoScroll = false
+			}
 			return m, nil
 		case key.Matches(msg, m.keys.HalfPageDown):
 			m.viewport.LineDown(halfPage)
+			if isProcess && !m.viewport.AtBottom() {
+				m.processAutoScroll = false
+			}
 			return m, nil
 		case key.Matches(msg, m.keys.HalfPageUp):
 			m.viewport.LineUp(halfPage)
+			if isProcess {
+				m.processAutoScroll = false
+			}
 			return m, nil
 		case key.Matches(msg, m.keys.GotoBottom):
 			m.viewport.GotoBottom()
+			if isProcess {
+				m.processAutoScroll = true
+			}
 			return m, nil
 		case key.Matches(msg, m.keys.GotoTop):
 			if m.pendingG {
 				m.pendingG = false
 				m.viewport.GotoTop()
+				if isProcess {
+					m.processAutoScroll = false
+				}
 			} else {
 				m.pendingG = true
 			}
@@ -889,8 +956,9 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.mode = model.ModeGroupDetail
 			}
 		} else if m.focusPanel == model.FocusProcesses && m.processIdx < len(m.processes) {
-			m.viewport.GotoTop()
+			m.processAutoScroll = true
 			m.mode = model.ModeProcessDetail
+			m.viewport.GotoBottom()
 		}
 		return m, nil
 	}
@@ -956,6 +1024,14 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.action = actionAddTask
 		m.form = NewForm("New Task", nil, m.width)
 		m.mode = model.ModeTaskForm
+		return m, nil
+	}
+
+	if key.Matches(msg, m.keys.BulkAdd) && m.mode == model.ModeList {
+		m.action = actionBulkAdd
+		m.returnMode = model.ModeList
+		m.editor = NewEditor("Bulk Add Tasks", "", m.height-10, m.width-12)
+		m.mode = model.ModeBulkAdd
 		return m, nil
 	}
 
@@ -1158,6 +1234,13 @@ func (m Model) handleTextSubmit(value string) (tea.Model, tea.Cmd) {
 
 	case actionGroupPrompt:
 		return m.spawnGroupAction(m.actionScopeGroup, value)
+
+	case actionRenameGroup:
+		store.RenameGroup(m.projectRoot, m.actionTaskID, value)
+		m.reload()
+		m.mode = model.ModeList
+		m.action = actionNone
+		return m, flashCmd(fmt.Sprintf("Renamed to \"%s\"", value))
 	}
 
 	m.mode = model.ModeList
@@ -1301,6 +1384,9 @@ func (m Model) handleEditorSave(content string) (tea.Model, tea.Cmd) {
 		m.action = actionNone
 		return m, flashCmd("Context saved")
 	}
+	if m.action == actionBulkAdd {
+		return m.spawnBulkAdd(content)
+	}
 	if m.actionPlanFile != "" {
 		store.SavePlan(m.projectRoot, m.actionPlanFile, content)
 		m.reload()
@@ -1311,6 +1397,87 @@ func (m Model) handleEditorSave(content string) (tea.Model, tea.Cmd) {
 	m.mode = model.ModeList
 	m.action = actionNone
 	return m, nil
+}
+
+// --- Bulk add ---
+
+func (m Model) spawnBulkAdd(bulkText string) (tea.Model, tea.Cmd) {
+	bulkText = strings.TrimSpace(bulkText)
+	if bulkText == "" {
+		m.mode = model.ModeList
+		m.action = actionNone
+		return m, flashCmd("No text to process")
+	}
+
+	// Determine group context: if a group is selected, assign tasks to it
+	groupID := ""
+	if g := m.selectedGroup(); g != nil {
+		groupID = g.ID
+	}
+
+	promptText := prompt.BuildBulkAddPrompt(m.projectRoot, bulkText, m.store.Groups, groupID)
+
+	label := "Bulk Add Tasks"
+	if m.runningLabels[label] {
+		m.mode = model.ModeList
+		m.action = actionNone
+		return m, flashCmd("Already running...")
+	}
+	m.runningLabels[label] = true
+
+	procID := fmt.Sprintf("bulk-add-%d", time.Now().Unix())
+	proc := model.ClaudeProcess{
+		ID:               procID,
+		Label:            label,
+		Status:           model.ProcessRunning,
+		Output:           "Parsing tasks...",
+		CompletionAction: model.CompletionApplyBulkAdd,
+		CompletionMeta:   map[string]string{"groupID": groupID},
+	}
+	m.addProcess(&proc)
+
+	m.mode = model.ModeList
+	m.action = actionNone
+
+	var cmd tea.Cmd
+	if m.program != nil {
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout())
+	} else {
+		projectRoot := m.projectRoot
+		cmd = func() tea.Msg {
+			output, logFile, err := runClaudePipe(projectRoot, procID, promptText)
+			if err != nil {
+				return claude.ProcessDoneMsg{ID: procID, LogFile: logFile, Err: err}
+			}
+			applyBulkAddResult(projectRoot, output, groupID)
+			return claude.ProcessDoneMsg{ID: procID, Output: output, LogFile: logFile}
+		}
+	}
+
+	return m, tea.Batch(cmd, flashCmd("Processing bulk add..."))
+}
+
+type bulkAddResult struct {
+	Tasks []struct {
+		Title       string   `json:"title"`
+		Description string   `json:"description"`
+		Tags        []string `json:"tags"`
+	} `json:"tasks"`
+	Summary string `json:"summary"`
+}
+
+func applyBulkAddResult(projectRoot string, output string, groupID string) {
+	cleaned := extractJSON(output)
+	var result bulkAddResult
+	if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
+		return
+	}
+	for _, t := range result.Tasks {
+		if t.Title == "" {
+			continue
+		}
+		store.AddTask(projectRoot, t.Title, t.Description, t.Tags, groupID)
+	}
 }
 
 // --- Action initiators ---
@@ -1369,6 +1536,15 @@ func (m Model) handleEdit() (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+
+	if g := m.selectedGroup(); g != nil && (m.mode == model.ModeList || m.mode == model.ModeGroupDetail) {
+		m.action = actionRenameGroup
+		m.actionTaskID = g.ID // reuse for group ID
+		m.textInput = NewTextInput("Rename Project", g.Name)
+		m.mode = model.ModeAddTask // reuse text input mode
+		return m, nil
+	}
+
 	return m, nil
 }
 
@@ -2353,6 +2529,9 @@ func (m *Model) runCompletionAction(proc *model.ClaudeProcess, finalText string)
 		if taskID != "" {
 			store.UpdateTask(projectRoot, taskID, map[string]interface{}{"status": string(model.StatusDone)})
 		}
+
+	case model.CompletionApplyBulkAdd:
+		applyBulkAddResult(projectRoot, finalText, meta["groupID"])
 	}
 }
 
@@ -2372,6 +2551,7 @@ func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
 		m.toolBridge.SendAnswer(msg.Message)
 		m.toolQuestionProcID = ""
 		m.toolQuestionText = ""
+		m.processAutoScroll = true
 		m.mode = model.ModeProcessDetail
 		m.viewport.GotoBottom()
 		return m, nil
@@ -2389,6 +2569,7 @@ func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	m.processAutoScroll = true
 	m.mode = model.ModeProcessDetail
 	m.viewport.GotoBottom()
 

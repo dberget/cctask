@@ -434,3 +434,41 @@ func BuildGroupActionPrompt(projectRoot string, tasks []model.Task, groups []mod
 	lines = append(lines, mcpToolGuidanceGroupAction)
 	return prependContext(projectRoot, strings.Join(lines, "\n"))
 }
+
+func BuildBulkAddPrompt(projectRoot string, bulkText string, groups []model.Group, groupID string) string {
+	var lines []string
+	lines = append(lines, "You are a task management assistant. Parse the following freeform text into structured tasks.")
+	lines = append(lines, "The text may contain bullet points, numbered lists, plain lines, or any other format.")
+	lines = append(lines, "")
+	lines = append(lines, "## Input Text")
+	lines = append(lines, bulkText)
+	lines = append(lines, "")
+
+	if groupID != "" {
+		for _, g := range groups {
+			if g.ID == groupID {
+				lines = append(lines, fmt.Sprintf("## Target Project: %s (ID: %s)", g.Name, g.ID))
+				lines = append(lines, "Assign all tasks to this project.")
+				lines = append(lines, "")
+				break
+			}
+		}
+	}
+
+	lines = append(lines, "## Output Format")
+	lines = append(lines, "Output ONLY valid JSON (no markdown code blocks, no preamble, no explanation):")
+	lines = append(lines, `{`)
+	lines = append(lines, `  "tasks": [`)
+	lines = append(lines, `    {"title": "...", "description": "...", "tags": ["..."]}`)
+	lines = append(lines, `  ],`)
+	lines = append(lines, `  "summary": "brief description of what was parsed"`)
+	lines = append(lines, `}`)
+	lines = append(lines, "")
+	lines = append(lines, "Rules:")
+	lines = append(lines, "- Each item in the input should become one task")
+	lines = append(lines, "- Title should be concise and actionable")
+	lines = append(lines, "- Description can include additional detail from the input, or be empty if the title captures everything")
+	lines = append(lines, "- Tags should be inferred from content when appropriate (e.g. \"bug\", \"feature\", \"docs\"), or an empty array")
+	lines = append(lines, "- Preserve the user's intent — do not add, remove, or merge items unless they are clearly duplicates")
+	return prependContext(projectRoot, strings.Join(lines, "\n"))
+}

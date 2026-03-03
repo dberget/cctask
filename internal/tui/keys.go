@@ -41,6 +41,7 @@ type KeyBindings struct {
 	TableView key.Binding
 	ListView  key.Binding
 	FilePick  key.Binding
+	BulkAdd   key.Binding
 
 	// Process actions
 	Cancel    key.Binding
@@ -95,6 +96,7 @@ func NewKeyBindings() KeyBindings {
 		TableView:   key.NewBinding(key.WithKeys("T"), key.WithHelp("T", "table view")),
 		ListView:    key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "list view")),
 		FilePick:    key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "import file")),
+		BulkAdd:     key.NewBinding(key.WithKeys("A"), key.WithHelp("A", "bulk add")),
 
 		Cancel:   key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "cancel")),
 		Chat:     key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "chat")),
@@ -126,7 +128,7 @@ func (k KeyBindings) ShortHelp() []key.Binding {
 func (k KeyBindings) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Enter, k.View, k.Tab, k.Collapse},
-		{k.Add, k.Edit, k.Delete, k.CycleStatus, k.AssignGroup},
+		{k.Add, k.BulkAdd, k.Edit, k.Delete, k.CycleStatus, k.AssignGroup},
 		{k.Run, k.Plan, k.Prompt, k.Merge, k.Filter},
 		{k.HideDone, k.Theme, k.Context, k.TableView, k.ListView},
 		{k.Help, k.Quit, k.Back},
@@ -152,7 +154,7 @@ func modeShortHelp(keys KeyBindings, mode model.ViewMode, selected *model.ListIt
 		return []key.Binding{keys.Cancel, keys.Chat, keys.OpenFull, keys.Back}
 	case model.ModeProcessChat:
 		return []key.Binding{keys.Enter, keys.Back}
-	case model.ModeEditPlan, model.ModeEditContext:
+	case model.ModeEditPlan, model.ModeEditContext, model.ModeBulkAdd:
 		return []key.Binding{keys.EditorSave, keys.Back}
 	case model.ModeContextView:
 		return []key.Binding{keys.Edit, keys.Back}
@@ -173,7 +175,7 @@ func listModeBindings(keys KeyBindings, sel *model.ListItem) []key.Binding {
 	hasSelection := isTask || isGroup
 
 	var bindings []key.Binding
-	bindings = append(bindings, keys.Add)
+	bindings = append(bindings, keys.Add, keys.BulkAdd)
 	if hasSelection {
 		bindings = append(bindings, keys.Edit, keys.Delete)
 	}

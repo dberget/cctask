@@ -61,6 +61,13 @@ func (m EditorModel) Update(msg tea.KeyMsg) (EditorModel, tea.Cmd) {
 	return m, cmd
 }
 
+// UpdateMouse forwards mouse events to the textarea for scroll support.
+func (m EditorModel) UpdateMouse(msg tea.MouseMsg) (EditorModel, tea.Cmd) {
+	var cmd tea.Cmd
+	m.inner, cmd = m.inner.Update(msg)
+	return m, cmd
+}
+
 func (m EditorModel) View() string {
 	heading := styleCyanBold.Render(m.Heading)
 	hints := styleGray.Render("Ctrl+S: save  Esc: cancel")

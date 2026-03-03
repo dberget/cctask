@@ -105,6 +105,7 @@ const (
 	CompletionCombinePlans                      // Save as combined plan
 	CompletionSaveFollowUp                      // Save/update plan from follow-up
 	CompletionRunTask                           // Mark task done on completion
+	CompletionApplyBulkAdd                      // Parse JSON and create tasks from bulk add
 )
 
 // EventKind categorizes streaming events for rendering.

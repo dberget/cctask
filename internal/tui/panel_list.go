@@ -168,9 +168,10 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 			}
 
 			// Single icon: plan ✓ (indigo) replaces status circle when plan exists,
-			// done ✓ (green) takes priority when task is done
+			// done ✓ (green) takes priority when task is done.
+			// Planning spinner only shows while plan is not yet saved.
 			icon := statusIcon(string(task.Status))
-			if task.Status == model.StatusPlanning {
+			if task.Status == model.StatusPlanning && !hasPlan {
 				icon = styleMagenta.Render(spinnerFrame)
 			} else if hasPlan && task.Status != model.StatusDone && task.Status != model.StatusMerged {
 				icon = styleCyan.Render("✓")
