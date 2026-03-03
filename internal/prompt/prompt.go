@@ -9,6 +9,28 @@ import (
 	"github.com/davidberget/cctask-go/internal/store"
 )
 
+const mcpToolGuidance = `## Available Tools
+You have access to MCP tools via the "cctask" server:
+- mcp__cctask__ask_user: Ask the user a clarifying question if you need more information. Use this freely.
+- mcp__cctask__get_tasks: Read tasks (filter by group_id or status).
+- mcp__cctask__get_task: Read a single task with its plan content.
+- mcp__cctask__get_groups: List all groups/projects.
+- mcp__cctask__get_plan: Read a plan file by task or group ID.
+
+Do NOT use mcp__cctask__create_task, mcp__cctask__update_task, mcp__cctask__create_group, mcp__cctask__update_plan in this flow — your text output will be saved automatically.
+Use the read tools and ask_user as needed, then output the final plan as markdown text.`
+
+const mcpToolGuidanceGroupAction = `## Available Tools
+You have access to MCP tools via the "cctask" server:
+- mcp__cctask__ask_user: Ask the user a clarifying question if you need more information. Use this freely.
+- mcp__cctask__get_tasks: Read tasks (filter by group_id or status).
+- mcp__cctask__get_task: Read a single task with its plan content.
+- mcp__cctask__get_groups: List all groups/projects.
+- mcp__cctask__get_plan: Read a plan file by task or group ID.
+
+Do NOT use mcp__cctask__create_task, mcp__cctask__update_task, mcp__cctask__create_group, mcp__cctask__update_plan in this flow — your JSON output will be parsed and applied automatically.
+Use the read tools and ask_user as needed, then output the final JSON result.`
+
 func prependContext(projectRoot string, prompt string) string {
 	ctx := store.LoadContext(projectRoot)
 	if ctx == "" {
@@ -162,6 +184,8 @@ func BuildPlanGenerationPrompt(projectRoot string, task *model.Task) string {
 	lines = append(lines, "- Key files to create or modify")
 	lines = append(lines, "- Important considerations or edge cases")
 	lines = append(lines, "- Testing approach")
+	lines = append(lines, "")
+	lines = append(lines, mcpToolGuidance)
 	return prependContext(projectRoot, strings.Join(lines, "\n"))
 }
 
@@ -215,6 +239,8 @@ func BuildGroupPlanGenerationPromptWithStore(projectRoot string, group *model.Gr
 	lines = append(lines, "- Key files to create or modify")
 	lines = append(lines, "- Important considerations or edge cases")
 	lines = append(lines, "- Testing approach")
+	lines = append(lines, "")
+	lines = append(lines, mcpToolGuidance)
 	return prependContext(projectRoot, strings.Join(lines, "\n"))
 }
 
@@ -289,6 +315,8 @@ func BuildPlanFollowUpPrompt(projectRoot string, task *model.Task, question stri
 	parts = append(parts, question)
 	parts = append(parts, "")
 	parts = append(parts, "Please provide an updated plan that addresses this question. If the question requires changes to the plan, incorporate them. If it's a clarification, add the answer as a note in the relevant section.")
+	parts = append(parts, "")
+	parts = append(parts, mcpToolGuidance)
 	return prependContext(projectRoot, strings.Join(parts, "\n"))
 }
 
@@ -375,5 +403,7 @@ func BuildGroupActionPrompt(projectRoot string, tasks []model.Task, groups []mod
 	lines = append(lines, "- If no new groups are needed, use an empty array for newGroups")
 	lines = append(lines, "- If no group hierarchy changes are needed, use an empty array for updatedGroups")
 	lines = append(lines, "- Do not remove or add tasks — only modify existing ones")
+	lines = append(lines, "")
+	lines = append(lines, mcpToolGuidanceGroupAction)
 	return prependContext(projectRoot, strings.Join(lines, "\n"))
 }

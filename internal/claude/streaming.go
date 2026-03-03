@@ -63,20 +63,21 @@ type ChatSubmitMsg struct {
 
 // SpawnStreamCmd creates a tea.Cmd that runs a Claude query using the SDK,
 // streaming structured events via p.Send() and returning StreamDoneMsg on completion.
-func SpawnStreamCmd(p *tea.Program, projectRoot string, procID string, prompt string, permissionMode string, cancels *ProcessCancels) tea.Cmd {
+// Extra SDK options (e.g. agent system prompt, model) can be passed via extraOpts.
+func SpawnStreamCmd(p *tea.Program, projectRoot string, procID string, prompt string, permissionMode string, cancels *ProcessCancels, toolBridge *ToolBridge, extraOpts ...claudecode.Option) tea.Cmd {
 	return func() tea.Msg {
-		return runStream(p, projectRoot, procID, prompt, "", permissionMode, cancels)
+		return runStream(p, projectRoot, procID, prompt, "", permissionMode, cancels, toolBridge, extraOpts...)
 	}
 }
 
 // SpawnStreamResumeCmd creates a tea.Cmd that resumes an existing Claude session.
-func SpawnStreamResumeCmd(p *tea.Program, projectRoot string, procID string, sessionID string, prompt string, cancels *ProcessCancels) tea.Cmd {
+func SpawnStreamResumeCmd(p *tea.Program, projectRoot string, procID string, sessionID string, prompt string, cancels *ProcessCancels, toolBridge *ToolBridge) tea.Cmd {
 	return func() tea.Msg {
-		return runStream(p, projectRoot, procID, prompt, sessionID, "", cancels)
+		return runStream(p, projectRoot, procID, prompt, sessionID, "", cancels, toolBridge)
 	}
 }
 
-func runStream(p *tea.Program, projectRoot string, procID string, prompt string, sessionID string, permissionMode string, cancels *ProcessCancels) tea.Msg {
+func runStream(p *tea.Program, projectRoot string, procID string, prompt string, sessionID string, permissionMode string, cancels *ProcessCancels, toolBridge *ToolBridge, extraOpts ...claudecode.Option) tea.Msg {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
@@ -100,6 +101,12 @@ func runStream(p *tea.Program, projectRoot string, procID string, prompt string,
 	if sessionID != "" {
 		opts = append(opts, claudecode.WithResume(sessionID))
 	}
+	if toolBridge != nil {
+		server := toolBridge.CreateMcpServer(procID)
+		opts = append(opts, claudecode.WithSdkMcpServer("cctask", server))
+		opts = append(opts, claudecode.WithDisallowedTools("AskUserQuestion", "TodoWrite"))
+	}
+	opts = append(opts, extraOpts...)
 
 	err := claudecode.WithClient(ctx, func(client claudecode.Client) error {
 		if err := client.Query(ctx, prompt); err != nil {
@@ -115,6 +122,11 @@ func runStream(p *tea.Program, projectRoot string, procID string, prompt string,
 				}
 				events := convertMessageToEvents(msg)
 				for _, ev := range events {
+					if ev.Kind == model.EventToolUse {
+						// Reset text buffer on each tool use so FinalText
+						// only contains output after the last tool call.
+						allText.Reset()
+					}
 					if ev.Kind == model.EventText {
 						allText.WriteString(ev.Text)
 					}

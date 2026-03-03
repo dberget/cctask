@@ -101,6 +101,7 @@ const (
 	EventToolResult                  // Tool execution result
 	EventUserMsg                     // User follow-up message
 	EventSystem                      // System/status message
+	EventToolQuestion                // MCP tool asking user a question
 )
 
 // StreamEvent is a single structured event from a Claude streaming session.
