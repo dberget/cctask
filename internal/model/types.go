@@ -89,6 +89,7 @@ const (
 	CompletionApplyGroupAction                  // Parse JSON and apply group action
 	CompletionCombinePlans                      // Save as combined plan
 	CompletionSaveFollowUp                      // Save/update plan from follow-up
+	CompletionRunTask                           // Mark task done on completion
 )
 
 // EventKind categorizes streaming events for rendering.

@@ -42,6 +42,7 @@ const (
 	actionGroupPrompt
 	actionAgentPlan
 	actionAgentRun
+	actionRunMode
 	actionRegenPlan
 )
 
@@ -75,6 +76,7 @@ type Model struct {
 	actionPlanFile   string         // plan file for editor actions
 	actionScopeGroup string         // group ID for group prompt actions ("" = unassigned)
 	actionParentID   string         // parent group ID for subgroup creation
+	actionAgent      *agent.Agent   // stashed agent between agent picker and run mode picker
 	returnMode       model.ViewMode // mode to return to on cancel
 
 	// Processes
@@ -966,13 +968,13 @@ func (m Model) handleFormSubmit(data TaskFormData) (tea.Model, tea.Cmd) {
 
 func (m Model) handleSelectSubmit(value string) (tea.Model, tea.Cmd) {
 	if m.mode == model.ModeAgentPicker {
-		var a *agent.Agent
-		if value != "__default__" {
-			a = m.agentByName(value)
-		}
-		m.mode = model.ModeList
 		switch m.action {
 		case actionAgentPlan:
+			var a *agent.Agent
+			if value != "__default__" {
+				a = m.agentByName(value)
+			}
+			m.mode = model.ModeList
 			m.action = actionNone
 			if t := m.selectedTask(); t != nil {
 				return m.spawnPlanGeneration(t, a)
@@ -981,10 +983,26 @@ func (m Model) handleSelectSubmit(value string) (tea.Model, tea.Cmd) {
 				return m.spawnGroupPlanGeneration(g, a)
 			}
 		case actionAgentRun:
+			var a *agent.Agent
+			if value != "__default__" {
+				a = m.agentByName(value)
+			}
+			m.actionAgent = a
+			return m.showRunModePicker()
+		case actionRunMode:
+			a := m.actionAgent
+			m.actionAgent = nil
 			m.action = actionNone
-			return m.executeRun(a)
+			m.mode = model.ModeList
+			switch value {
+			case "terminal":
+				return m.executeRun(a)
+			case "background":
+				return m.spawnBackgroundRun(a)
+			}
 		}
 		m.action = actionNone
+		m.mode = model.ModeList
 		return m, nil
 	}
 
@@ -1193,7 +1211,19 @@ func (m Model) handleRun() (tea.Model, tea.Cmd) {
 	if len(m.agents) > 0 {
 		return m.showAgentPicker(actionAgentRun)
 	}
-	return m.executeRun(nil)
+	m.actionAgent = nil
+	return m.showRunModePicker()
+}
+
+func (m Model) showRunModePicker() (tea.Model, tea.Cmd) {
+	items := []SelectItem{
+		{Label: "New terminal", Value: "terminal"},
+		{Label: "Background process", Value: "background"},
+	}
+	m.selectInput = NewSelectInput("Run mode", items)
+	m.action = actionRunMode
+	m.mode = model.ModeAgentPicker
+	return m, nil
 }
 
 func (m Model) executeRun(a *agent.Agent) (tea.Model, tea.Cmd) {
@@ -1212,6 +1242,57 @@ func (m Model) executeRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 		claude.SpawnInTerminal(m.projectRoot, systemPrompt),
 		flashCmd("Opening claude in new terminal..."),
 	)
+}
+
+func (m Model) spawnBackgroundRun(a *agent.Agent) (tea.Model, tea.Cmd) {
+	var title, id, promptText string
+	isTask := false
+
+	if t := m.selectedTask(); t != nil {
+		title = t.Title
+		id = t.ID
+		isTask = true
+		promptText = prompt.BuildTaskPrompt(m.projectRoot, t)
+	} else if g := m.selectedGroup(); g != nil {
+		title = g.Name
+		id = g.ID
+		promptText = prompt.BuildGroupPrompt(m.projectRoot, g, m.store)
+	} else {
+		return m, nil
+	}
+
+	label := "Run: " + title
+	if m.runningLabels[label] {
+		return m, flashCmd("Already running...")
+	}
+	m.runningLabels[label] = true
+
+	procID := fmt.Sprintf("run-%s-%d", id, time.Now().Unix())
+	proc := model.ClaudeProcess{
+		ID:            procID,
+		Label:         label,
+		Status:        model.ProcessRunning,
+		Output:        "Waiting for claude...",
+		IsInteractive: true,
+	}
+	if isTask {
+		proc.CompletionAction = model.CompletionRunTask
+		proc.CompletionMeta = map[string]string{"taskID": id}
+		store.UpdateTask(m.projectRoot, id, map[string]interface{}{"status": string(model.StatusInProgress)})
+		m.reload()
+	}
+	m.processes = append(m.processes, proc)
+
+	promptText += "\n\n" + prompt.McpToolGuidanceRun
+
+	var cmd tea.Cmd
+	if m.program != nil {
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "bypassPermissions", m.processCancels, m.toolBridge, agentSDKOpts(a)...)
+	} else {
+		return m, flashCmd("Streaming not available (no program ref)")
+	}
+
+	return m, tea.Batch(cmd, flashCmd(fmt.Sprintf("Running %s in background...", title)))
 }
 
 func (m Model) handlePlan() (tea.Model, tea.Cmd) {
@@ -1984,6 +2065,12 @@ func (m *Model) runCompletionAction(proc *model.ClaudeProcess, finalText string)
 		store.SavePlan(projectRoot, planFile, finalText)
 		if meta["hasPlanFile"] != "true" {
 			store.UpdateTask(projectRoot, taskID, map[string]interface{}{"planFile": planFile})
+		}
+
+	case model.CompletionRunTask:
+		taskID := meta["taskID"]
+		if taskID != "" {
+			store.UpdateTask(projectRoot, taskID, map[string]interface{}{"status": string(model.StatusDone)})
 		}
 	}
 }

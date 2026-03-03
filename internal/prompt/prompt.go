@@ -31,6 +31,22 @@ You have access to MCP tools via the "cctask" server:
 Do NOT use mcp__cctask__create_task, mcp__cctask__update_task, mcp__cctask__create_group, mcp__cctask__update_plan in this flow — your JSON output will be parsed and applied automatically.
 Use the read tools and ask_user as needed, then output the final JSON result.`
 
+// McpToolGuidanceRun is appended to background run prompts — Claude gets full MCP tool access
+// since it's doing actual implementation work.
+const McpToolGuidanceRun = `## Available Tools
+You have access to MCP tools via the "cctask" server:
+- mcp__cctask__ask_user: Ask the user a clarifying question if you need more information. Use this freely.
+- mcp__cctask__get_tasks: Read tasks (filter by group_id or status).
+- mcp__cctask__get_task: Read a single task with its plan content.
+- mcp__cctask__get_groups: List all groups/projects.
+- mcp__cctask__get_plan: Read a plan file by task or group ID.
+- mcp__cctask__create_task: Create new tasks as needed.
+- mcp__cctask__update_task: Update task status, title, description, tags, or group.
+- mcp__cctask__create_group: Create new groups/projects.
+- mcp__cctask__update_plan: Write or update plan files.
+
+You have full access to all tools. Use them as needed to complete the implementation work.`
+
 func prependContext(projectRoot string, prompt string) string {
 	ctx := store.LoadContext(projectRoot)
 	if ctx == "" {
