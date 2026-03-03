@@ -152,7 +152,7 @@ func GenerateTaskID(s *model.TaskStore) string {
 	return id
 }
 
-func AddTask(projectRoot string, title, description string, tags []string, group string) (*model.Task, error) {
+func AddTask(projectRoot string, title, description string, tags []string, group string, workDir ...string) (*model.Task, error) {
 	s, err := LoadStore(projectRoot)
 	if err != nil {
 		return nil, err
@@ -171,6 +171,9 @@ func AddTask(projectRoot string, title, description string, tags []string, group
 		Group:       group,
 		Created:     now,
 		Updated:     now,
+	}
+	if len(workDir) > 0 {
+		task.WorkDir = workDir[0]
 	}
 	s.Tasks = append(s.Tasks, task)
 	if err := SaveStore(projectRoot, s); err != nil {
@@ -214,6 +217,10 @@ func UpdateTask(projectRoot string, id string, updates map[string]interface{}) (
 		case "planFile":
 			if val, ok := v.(string); ok {
 				task.PlanFile = val
+			}
+		case "workDir":
+			if val, ok := v.(string); ok {
+				task.WorkDir = val
 			}
 		case "mergedInto":
 			if val, ok := v.(string); ok {
@@ -270,7 +277,7 @@ func AddGroup(projectRoot string, name string, description string) (*model.Group
 	return AddGroupWithParent(projectRoot, name, description, "")
 }
 
-func AddGroupWithParent(projectRoot string, name string, description string, parentGroup string) (*model.Group, error) {
+func AddGroupWithParent(projectRoot string, name string, description string, parentGroup string, workDir ...string) (*model.Group, error) {
 	s, err := LoadStore(projectRoot)
 	if err != nil {
 		return nil, err
@@ -286,6 +293,9 @@ func AddGroupWithParent(projectRoot string, name string, description string, par
 		Description: description,
 		ParentGroup: parentGroup,
 		Created:     model.Now(),
+	}
+	if len(workDir) > 0 {
+		group.WorkDir = workDir[0]
 	}
 	s.Groups = append(s.Groups, group)
 	if err := SaveStore(projectRoot, s); err != nil {
@@ -413,6 +423,49 @@ func GetGroupPath(s *model.TaskStore, groupID string) []model.Group {
 		current = g.ParentGroup
 	}
 	return path
+}
+
+// resolveDir resolves a workDir value against the project root.
+// Empty string returns projectRoot, absolute paths are used as-is,
+// relative paths are resolved against projectRoot.
+func resolveDir(projectRoot, workDir string) string {
+	if workDir == "" {
+		return projectRoot
+	}
+	if filepath.IsAbs(workDir) {
+		return workDir
+	}
+	return filepath.Join(projectRoot, workDir)
+}
+
+// ResolveWorkDir returns the effective working directory for a task.
+// It checks the task's own WorkDir, then walks up the group hierarchy,
+// and falls back to projectRoot.
+func ResolveWorkDir(projectRoot string, s *model.TaskStore, task *model.Task) string {
+	if task.WorkDir != "" {
+		return resolveDir(projectRoot, task.WorkDir)
+	}
+	if task.Group != "" {
+		if g := FindGroup(s, task.Group); g != nil {
+			return ResolveGroupWorkDir(projectRoot, s, g)
+		}
+	}
+	return projectRoot
+}
+
+// ResolveGroupWorkDir returns the effective working directory for a group.
+// It checks the group's own WorkDir, then walks up parent groups,
+// and falls back to projectRoot.
+func ResolveGroupWorkDir(projectRoot string, s *model.TaskStore, group *model.Group) string {
+	if group.WorkDir != "" {
+		return resolveDir(projectRoot, group.WorkDir)
+	}
+	if group.ParentGroup != "" {
+		if parent := FindGroup(s, group.ParentGroup); parent != nil {
+			return ResolveGroupWorkDir(projectRoot, s, parent)
+		}
+	}
+	return projectRoot
 }
 
 func BuildListItems(s *model.TaskStore, filter string, collapsed map[string]bool, hideCompleted bool) []model.ListItem {

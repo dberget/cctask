@@ -93,6 +93,9 @@ func renderTaskDetail(task *model.Task, projectRoot string, width int) string {
 	if task.Group != "" {
 		lines = append(lines, styleGray.Render(padRight("Project:", 10))+task.Group)
 	}
+	if task.WorkDir != "" {
+		lines = append(lines, styleGray.Render(padRight("WorkDir:", 10))+task.WorkDir)
+	}
 	lines = append(lines, styleGray.Render(padRight("Plan:", 10))+planStatus(hasPlan))
 	if task.MergedInto != "" {
 		lines = append(lines, styleGray.Render(padRight("Merged:", 10))+styleDim.Render("into "+task.MergedInto))
@@ -153,6 +156,9 @@ func renderGroupDetail(group *model.Group, s *model.TaskStore, projectRoot strin
 		if parent := store.FindGroup(s, group.ParentGroup); parent != nil {
 			lines = append(lines, styleGray.Render(padRight("Parent:", 12))+parent.Name)
 		}
+	}
+	if group.WorkDir != "" {
+		lines = append(lines, styleGray.Render(padRight("WorkDir:", 12))+group.WorkDir)
 	}
 	lines = append(lines, styleGray.Render(padRight("Tasks:", 12))+fmt.Sprintf("%d", len(tasks)))
 	if len(children) > 0 {

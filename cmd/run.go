@@ -26,8 +26,9 @@ var runCmd = &cobra.Command{
 		}
 
 		if task := store.FindTask(s, id); task != nil {
+			workDir := store.ResolveWorkDir(root, s, task)
 			p := prompt.BuildTaskPrompt(root, task)
-			if err := claude.RunInteractive(root, p); err != nil {
+			if err := claude.RunInteractive(workDir, p); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -35,8 +36,9 @@ var runCmd = &cobra.Command{
 		}
 
 		if group := store.FindGroup(s, id); group != nil {
+			workDir := store.ResolveGroupWorkDir(root, s, group)
 			p := prompt.BuildGroupPrompt(root, group, s)
-			if err := claude.RunInteractive(root, p); err != nil {
+			if err := claude.RunInteractive(workDir, p); err != nil {
 				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 				os.Exit(1)
 			}

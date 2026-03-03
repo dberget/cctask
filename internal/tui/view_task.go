@@ -25,6 +25,9 @@ func renderTaskView(task *model.Task, projectRoot string, width int) string {
 	if task.Group != "" {
 		lines = append(lines, styleGray.Render(padRight("Project:", 10))+task.Group)
 	}
+	if task.WorkDir != "" {
+		lines = append(lines, styleGray.Render(padRight("WorkDir:", 10))+task.WorkDir)
+	}
 	lines = append(lines, styleGray.Render(padRight("Plan:", 10))+planStatus(hasPlan))
 
 	if task.Description != "" {
