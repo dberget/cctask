@@ -11,6 +11,7 @@ type TaskFormData struct {
 	Title       string
 	Description string
 	Tags        string
+	WorkDir     string
 }
 
 type formField int
@@ -19,11 +20,12 @@ const (
 	fieldTitle formField = iota
 	fieldDescription
 	fieldTags
+	fieldWorkDir
 	fieldCount
 )
 
-var fieldLabels = [fieldCount]string{"Title", "Description", "Tags"}
-var fieldHints = [fieldCount]string{"", "task details, context, acceptance criteria", "comma-separated"}
+var fieldLabels = [fieldCount]string{"Title", "Description", "Tags", "WorkDir"}
+var fieldHints = [fieldCount]string{"", "task details, context, acceptance criteria", "comma-separated", "relative or absolute path"}
 
 type FormModel struct {
 	Heading string
@@ -44,8 +46,10 @@ func NewForm(heading string, initial *TaskFormData, width int) FormModel {
 		m.Values[fieldTitle] = initial.Title
 		m.Values[fieldDescription] = initial.Description
 		m.Values[fieldTags] = initial.Tags
+		m.Values[fieldWorkDir] = initial.WorkDir
 		m.Cursors[fieldTitle] = len(initial.Title)
 		m.Cursors[fieldTags] = len(initial.Tags)
+		m.Cursors[fieldWorkDir] = len(initial.WorkDir)
 	}
 	// Initialize DescLines from description
 	desc := m.Values[fieldDescription]
@@ -64,6 +68,7 @@ func (m FormModel) Data() TaskFormData {
 		Title:       m.Values[fieldTitle],
 		Description: strings.Join(m.DescLines, "\n"),
 		Tags:        m.Values[fieldTags],
+		WorkDir:     m.Values[fieldWorkDir],
 	}
 }
 
@@ -99,7 +104,7 @@ func (m FormModel) updateSingleLine(msg tea.KeyMsg) (FormModel, tea.Cmd) {
 
 	switch {
 	case msg.Type == tea.KeyEnter:
-		if f == fieldTags {
+		if f == fieldWorkDir {
 			if strings.TrimSpace(m.Values[fieldTitle]) != "" {
 				data := m.Data()
 				return m, func() tea.Msg { return FormSubmitMsg{Data: data} }

@@ -259,6 +259,10 @@ func (tb *ToolBridge) createTaskTool() *claudecode.McpTool {
 					"items":       map[string]any{"type": "string"},
 					"description": "Tags for the task (optional)",
 				},
+				"work_dir": map[string]any{
+					"type":        "string",
+					"description": "Working directory for Claude when running this task (relative to project root or absolute, optional)",
+				},
 			},
 			"required": []string{"title"},
 		},
@@ -269,6 +273,7 @@ func (tb *ToolBridge) createTaskTool() *claudecode.McpTool {
 			}
 			description, _ := args["description"].(string)
 			group, _ := args["group"].(string)
+			workDir, _ := args["work_dir"].(string)
 
 			var tags []string
 			if rawTags, ok := args["tags"].([]any); ok {
@@ -279,7 +284,7 @@ func (tb *ToolBridge) createTaskTool() *claudecode.McpTool {
 				}
 			}
 
-			task, err := store.AddTask(tb.ProjectRoot, title, description, tags, group)
+			task, err := store.AddTask(tb.ProjectRoot, title, description, tags, group, workDir)
 			if err != nil {
 				return errorResult(fmt.Sprintf("failed to create task: %v", err)), nil
 			}
@@ -335,6 +340,10 @@ func (tb *ToolBridge) updateTaskTool() *claudecode.McpTool {
 					"type":        "string",
 					"description": "Group ID to assign to, or empty string to unassign (optional)",
 				},
+				"work_dir": map[string]any{
+					"type":        "string",
+					"description": "Working directory for Claude when running this task (relative to project root or absolute, optional)",
+				},
 			},
 			"required": []string{"task_id"},
 		},
@@ -369,6 +378,11 @@ func (tb *ToolBridge) updateTaskTool() *claudecode.McpTool {
 			if v, ok := args["group"]; ok {
 				if s, ok := v.(string); ok {
 					updates["group"] = s
+				}
+			}
+			if v, ok := args["work_dir"]; ok {
+				if s, ok := v.(string); ok {
+					updates["workDir"] = s
 				}
 			}
 
@@ -441,6 +455,10 @@ func (tb *ToolBridge) createGroupTool() *claudecode.McpTool {
 					"type":        "string",
 					"description": "Parent group ID to nest under (optional)",
 				},
+				"work_dir": map[string]any{
+					"type":        "string",
+					"description": "Working directory for Claude when running tasks in this group (relative to project root or absolute, optional)",
+				},
 			},
 			"required": []string{"name"},
 		},
@@ -451,8 +469,9 @@ func (tb *ToolBridge) createGroupTool() *claudecode.McpTool {
 			}
 			description, _ := args["description"].(string)
 			parentGroup, _ := args["parent_group"].(string)
+			workDir, _ := args["work_dir"].(string)
 
-			group, err := store.AddGroupWithParent(tb.ProjectRoot, name, description, parentGroup)
+			group, err := store.AddGroupWithParent(tb.ProjectRoot, name, description, parentGroup, workDir)
 			if err != nil {
 				return errorResult(fmt.Sprintf("failed to create group: %v", err)), nil
 			}

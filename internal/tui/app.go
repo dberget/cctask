@@ -980,7 +980,7 @@ func (m Model) handleFormSubmit(data TaskFormData) (tea.Model, tea.Cmd) {
 
 	switch m.action {
 	case actionAddTask:
-		store.AddTask(m.projectRoot, data.Title, data.Description, tags, "")
+		store.AddTask(m.projectRoot, data.Title, data.Description, tags, "", data.WorkDir)
 		m.reload()
 		m.mode = model.ModeList
 		m.action = actionNone
@@ -991,6 +991,7 @@ func (m Model) handleFormSubmit(data TaskFormData) (tea.Model, tea.Cmd) {
 			"title":       data.Title,
 			"description": data.Description,
 			"tags":        tags,
+			"workDir":     data.WorkDir,
 		})
 		m.reload()
 		m.mode = model.ModeList
@@ -1151,6 +1152,7 @@ func (m Model) handleEdit() (tea.Model, tea.Cmd) {
 				Title:       t.Title,
 				Description: t.Description,
 				Tags:        strings.Join(t.Tags, ", "),
+				WorkDir:     t.WorkDir,
 			}
 			m.form = NewForm(fmt.Sprintf("Edit Task — %s", t.ID), initial, m.width)
 			m.mode = model.ModeTaskForm
@@ -1265,12 +1267,15 @@ func (m Model) showRunModePicker() (tea.Model, tea.Cmd) {
 
 func (m Model) executeRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 	var systemPrompt string
+	var workDir string
 	if t := m.selectedTask(); t != nil {
 		systemPrompt = prompt.BuildTaskPrompt(m.projectRoot, t)
+		workDir = store.ResolveWorkDir(m.projectRoot, m.store, t)
 		store.UpdateTask(m.projectRoot, t.ID, map[string]interface{}{"status": string(model.StatusInProgress)})
 		m.reload()
 	} else if g := m.selectedGroup(); g != nil {
 		systemPrompt = prompt.BuildGroupPrompt(m.projectRoot, g, m.store)
+		workDir = store.ResolveGroupWorkDir(m.projectRoot, m.store, g)
 	} else {
 		return m, nil
 	}
@@ -1278,13 +1283,14 @@ func (m Model) executeRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 		systemPrompt = a.SystemPrompt + "\n\n---\n\n" + systemPrompt
 	}
 	return m, tea.Batch(
-		claude.SpawnInTerminal(m.projectRoot, systemPrompt),
+		claude.SpawnInTerminal(workDir, systemPrompt),
 		flashCmd("Opening claude in new terminal..."),
 	)
 }
 
 func (m Model) spawnBackgroundRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 	var title, id, promptText string
+	var workDir string
 	isTask := false
 
 	if t := m.selectedTask(); t != nil {
@@ -1292,10 +1298,12 @@ func (m Model) spawnBackgroundRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 		id = t.ID
 		isTask = true
 		promptText = prompt.BuildTaskPrompt(m.projectRoot, t)
+		workDir = store.ResolveWorkDir(m.projectRoot, m.store, t)
 	} else if g := m.selectedGroup(); g != nil {
 		title = g.Name
 		id = g.ID
 		promptText = prompt.BuildGroupPrompt(m.projectRoot, g, m.store)
+		workDir = store.ResolveGroupWorkDir(m.projectRoot, m.store, g)
 	} else {
 		return m, nil
 	}
@@ -1326,7 +1334,7 @@ func (m Model) spawnBackgroundRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "bypassPermissions", m.processCancels, m.toolBridge, m.processTimeout(), agentSDKOpts(a)...)
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "bypassPermissions", m.processCancels, m.toolBridge, m.processTimeout(), agentSDKOpts(a)...)
 	} else {
 		return m, flashCmd("Streaming not available (no program ref)")
 	}
@@ -1548,12 +1556,14 @@ type groupActionTask struct {
 	Status      string   `json:"status"`
 	Tags        []string `json:"tags"`
 	Group       string   `json:"group"`
+	WorkDir     string   `json:"workDir,omitempty"`
 }
 
 type groupActionGroup struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	ParentGroup string `json:"parentGroup"`
+	WorkDir     string `json:"workDir,omitempty"`
 }
 
 type groupActionGroupUpdate struct {
@@ -1590,6 +1600,14 @@ func (m Model) spawnGroupAction(scopeGroupID string, instruction string) (tea.Mo
 
 	promptText := prompt.BuildGroupActionPrompt(m.projectRoot, scopeTasks, m.store.Groups, scopeLabel, instruction)
 
+	// Resolve workDir: for "all tasks" scope use projectRoot, otherwise resolve from the group
+	workDir := m.projectRoot
+	if scopeGroupID != "" && scopeGroupID != "__all__" {
+		if g := store.FindGroup(m.store, scopeGroupID); g != nil {
+			workDir = store.ResolveGroupWorkDir(m.projectRoot, m.store, g)
+		}
+	}
+
 	label := "Prompt: " + scopeLabel
 	if m.runningLabels[label] {
 		m.mode = model.ModeList
@@ -1613,7 +1631,7 @@ func (m Model) spawnGroupAction(scopeGroupID string, instruction string) (tea.Mo
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout())
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout())
 	} else {
 		projectRoot := m.projectRoot
 		cmd = func() tea.Msg {
@@ -1672,6 +1690,7 @@ func applyGroupActionResult(projectRoot string, output string) {
 			Name:        ng.Name,
 			Description: ng.Description,
 			ParentGroup: ng.ParentGroup,
+			WorkDir:     ng.WorkDir,
 			Created:     model.Now(),
 		})
 	}
@@ -1705,6 +1724,7 @@ func applyGroupActionResult(projectRoot string, output string) {
 			t.Tags = ut.Tags
 		}
 		t.Group = ut.Group
+		t.WorkDir = ut.WorkDir
 		t.Updated = model.Now()
 	}
 
@@ -1739,11 +1759,12 @@ func (m Model) spawnPlanGeneration(task *model.Task, a *agent.Agent) (tea.Model,
 	store.UpdateTask(m.projectRoot, task.ID, map[string]interface{}{"status": string(model.StatusPlanning)})
 	m.reload()
 
+	workDir := store.ResolveWorkDir(m.projectRoot, m.store, task)
 	promptText := prompt.BuildPlanGenerationPrompt(m.projectRoot, task)
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout(), agentSDKOpts(a)...)
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout(), agentSDKOpts(a)...)
 	} else {
 		projectRoot := m.projectRoot
 		taskID := task.ID
@@ -1783,11 +1804,12 @@ func (m Model) spawnGroupPlanGeneration(group *model.Group, a *agent.Agent) (tea
 	m.processes = append(m.processes, proc)
 
 	tasks := store.GetTasksForGroup(m.store, group.ID)
+	workDir := store.ResolveGroupWorkDir(m.projectRoot, m.store, group)
 	promptText := prompt.BuildGroupPlanGenerationPrompt(m.projectRoot, group, tasks)
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout(), agentSDKOpts(a)...)
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout(), agentSDKOpts(a)...)
 	} else {
 		projectRoot := m.projectRoot
 		groupID := group.ID
@@ -1869,6 +1891,7 @@ func (m Model) executeFollowUp(taskID, question string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	workDir := store.ResolveWorkDir(m.projectRoot, m.store, task)
 	promptText := prompt.BuildPlanFollowUpPrompt(m.projectRoot, task, question)
 	label := "Ask: " + task.Title
 	procID := fmt.Sprintf("followup-%s-%d", taskID, time.Now().Unix())
@@ -1898,7 +1921,7 @@ func (m Model) executeFollowUp(taskID, question string) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout())
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout())
 	} else {
 		projectRoot := m.projectRoot
 		hasPlanFile := task.PlanFile != ""

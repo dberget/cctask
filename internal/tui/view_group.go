@@ -37,6 +37,9 @@ func renderGroupView(group *model.Group, s *model.TaskStore, projectRoot string)
 	}
 
 	lines = append(lines, "")
+	if group.WorkDir != "" {
+		lines = append(lines, styleGray.Render(padRight("WorkDir:", 10))+group.WorkDir)
+	}
 	lines = append(lines, styleGray.Render(padRight("Plan:", 10))+planStatus(hasPlan))
 
 	// Subgroups section

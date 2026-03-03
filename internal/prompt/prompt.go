@@ -59,6 +59,9 @@ func BuildTaskPrompt(projectRoot string, task *model.Task) string {
 	var parts []string
 	parts = append(parts, fmt.Sprintf("# Task: %s", task.Title))
 	parts = append(parts, fmt.Sprintf("ID: %s", task.ID))
+	if task.WorkDir != "" {
+		parts = append(parts, fmt.Sprintf("Working Directory: %s", task.WorkDir))
+	}
 	if task.Description != "" {
 		parts = append(parts, fmt.Sprintf("\n## Description\n%s", task.Description))
 	}
@@ -89,6 +92,9 @@ func BuildGroupPrompt(projectRoot string, group *model.Group, s *model.TaskStore
 		parts = append(parts, fmt.Sprintf("# Project: %s", strings.Join(names, " > ")))
 	} else {
 		parts = append(parts, fmt.Sprintf("# Project: %s", group.Name))
+	}
+	if group.WorkDir != "" {
+		parts = append(parts, fmt.Sprintf("Working Directory: %s", group.WorkDir))
 	}
 
 	if group.Description != "" {
@@ -146,6 +152,7 @@ func BuildGroupPrompt(projectRoot string, group *model.Group, s *model.TaskStore
 	parts = append(parts, `      "status": "pending",`)
 	parts = append(parts, `      "tags": ["tag1"],`)
 	parts = append(parts, fmt.Sprintf(`      "group": "%s",`, group.ID))
+	parts = append(parts, `      "workDir": "optional/relative/path",`)
 	parts = append(parts, `      "planFile": "t1-task-title.md",`)
 	parts = append(parts, `      "created": "2025-01-01T00:00:00Z",`)
 	parts = append(parts, `      "updated": "2025-01-01T00:00:00Z"`)
@@ -157,6 +164,7 @@ func BuildGroupPrompt(projectRoot string, group *model.Group, s *model.TaskStore
 	parts = append(parts, `      "name": "Group Name",`)
 	parts = append(parts, `      "description": "Details",`)
 	parts = append(parts, `      "parentGroup": "",`)
+	parts = append(parts, `      "workDir": "optional/relative/path",`)
 	parts = append(parts, `      "planFile": "group-slug.md",`)
 	parts = append(parts, `      "created": "2025-01-01T00:00:00Z"`)
 	parts = append(parts, `    }`)
@@ -344,6 +352,7 @@ type taskJSON struct {
 	Status      string   `json:"status"`
 	Tags        []string `json:"tags"`
 	Group       string   `json:"group"`
+	WorkDir     string   `json:"workDir,omitempty"`
 }
 
 // groupJSON is a simplified group struct for JSON serialization in group action prompts.
@@ -352,6 +361,7 @@ type groupJSON struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	ParentGroup string `json:"parentGroup"`
+	WorkDir     string `json:"workDir,omitempty"`
 }
 
 func BuildGroupActionPrompt(projectRoot string, tasks []model.Task, groups []model.Group, scopeLabel string, instruction string) string {
@@ -368,13 +378,14 @@ func BuildGroupActionPrompt(projectRoot string, tasks []model.Task, groups []mod
 			Status:      string(t.Status),
 			Tags:        tags,
 			Group:       t.Group,
+			WorkDir:     t.WorkDir,
 		})
 	}
 	tasksData, _ := json.MarshalIndent(tj, "", "  ")
 
 	var gj []groupJSON
 	for _, g := range groups {
-		gj = append(gj, groupJSON{ID: g.ID, Name: g.Name, Description: g.Description, ParentGroup: g.ParentGroup})
+		gj = append(gj, groupJSON{ID: g.ID, Name: g.Name, Description: g.Description, ParentGroup: g.ParentGroup, WorkDir: g.WorkDir})
 	}
 	groupsData, _ := json.MarshalIndent(gj, "", "  ")
 
@@ -396,10 +407,10 @@ func BuildGroupActionPrompt(projectRoot string, tasks []model.Task, groups []mod
 	lines = append(lines, "Output ONLY valid JSON (no markdown code blocks, no preamble, no explanation):")
 	lines = append(lines, `{`)
 	lines = append(lines, `  "tasks": [`)
-	lines = append(lines, `    {"id": "t1", "title": "...", "description": "...", "status": "pending", "tags": ["..."], "group": "group-id"}`)
+	lines = append(lines, `    {"id": "t1", "title": "...", "description": "...", "status": "pending", "tags": ["..."], "group": "group-id", "workDir": "optional/relative/path"}`)
 	lines = append(lines, `  ],`)
 	lines = append(lines, `  "newGroups": [`)
-	lines = append(lines, `    {"name": "Group Name", "description": "...", "parentGroup": "parent-group-id-or-empty"}`)
+	lines = append(lines, `    {"name": "Group Name", "description": "...", "parentGroup": "parent-group-id-or-empty", "workDir": "optional/relative/path"}`)
 	lines = append(lines, `  ],`)
 	lines = append(lines, `  "updatedGroups": [`)
 	lines = append(lines, `    {"id": "existing-group-id", "parentGroup": "new-parent-id-or-empty"}`)
@@ -409,7 +420,7 @@ func BuildGroupActionPrompt(projectRoot string, tasks []model.Task, groups []mod
 	lines = append(lines, "")
 	lines = append(lines, "Rules:")
 	lines = append(lines, "- Include ONLY tasks that were modified in the tasks array")
-	lines = append(lines, "- Each task must have ALL fields: id, title, description, status, tags, group")
+	lines = append(lines, "- Each task must have ALL fields: id, title, description, status, tags, group (workDir is optional)")
 	lines = append(lines, "- Valid status values: \"pending\", \"planning\", \"in-progress\", \"done\", \"merged\"")
 	lines = append(lines, "- Do not modify tasks with status \"merged\"")
 	lines = append(lines, "- For group field, use the group ID (lowercase, hyphenated slug of the name)")

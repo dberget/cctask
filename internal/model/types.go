@@ -36,6 +36,7 @@ type Task struct {
 	Status      TaskStatus `json:"status"`
 	Tags        []string   `json:"tags"`
 	Group       string     `json:"group,omitempty"`
+	WorkDir     string     `json:"workDir,omitempty"`
 	PlanFile    string     `json:"planFile,omitempty"`
 	MergedInto  string     `json:"mergedInto,omitempty"`
 	Created     string     `json:"created"`
@@ -47,6 +48,7 @@ type Group struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	ParentGroup string `json:"parentGroup,omitempty"`
+	WorkDir     string `json:"workDir,omitempty"`
 	PlanFile    string `json:"planFile,omitempty"`
 	Created     string `json:"created"`
 }
