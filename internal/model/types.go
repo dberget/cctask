@@ -89,6 +89,7 @@ const (
 	CompletionApplyGroupAction                  // Parse JSON and apply group action
 	CompletionCombinePlans                      // Save as combined plan
 	CompletionSaveFollowUp                      // Save/update plan from follow-up
+	CompletionRunTask                           // Mark task done on completion
 )
 
 // EventKind categorizes streaming events for rendering.
@@ -101,6 +102,7 @@ const (
 	EventToolResult                  // Tool execution result
 	EventUserMsg                     // User follow-up message
 	EventSystem                      // System/status message
+	EventToolQuestion                // MCP tool asking user a question
 )
 
 // StreamEvent is a single structured event from a Claude streaming session.

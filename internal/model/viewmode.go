@@ -27,6 +27,7 @@ const (
 	ModeEditContext
 	ModeHelp
 	ModeProcessChat
+	ModeAgentPicker
 )
 
 func (m ViewMode) String() string {
@@ -79,6 +80,8 @@ func (m ViewMode) String() string {
 		return "help"
 	case ModeProcessChat:
 		return "process-chat"
+	case ModeAgentPicker:
+		return "agent-picker"
 	default:
 		return "unknown"
 	}

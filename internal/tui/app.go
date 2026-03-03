@@ -11,10 +11,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/davidberget/cctask-go/internal/agent"
 	"github.com/davidberget/cctask-go/internal/claude"
 	"github.com/davidberget/cctask-go/internal/model"
 	"github.com/davidberget/cctask-go/internal/prompt"
 	"github.com/davidberget/cctask-go/internal/store"
+	claudecode "github.com/severity1/claude-agent-sdk-go"
 )
 
 // programReadyMsg carries the tea.Program reference for streaming processes.
@@ -38,6 +40,10 @@ const (
 	actionEditPlanContent
 	actionEditContext
 	actionGroupPrompt
+	actionAgentPlan
+	actionAgentRun
+	actionRunMode
+	actionRegenPlan
 )
 
 type Model struct {
@@ -70,6 +76,7 @@ type Model struct {
 	actionPlanFile   string         // plan file for editor actions
 	actionScopeGroup string         // group ID for group prompt actions ("" = unassigned)
 	actionParentID   string         // parent group ID for subgroup creation
+	actionAgent      *agent.Agent   // stashed agent between agent picker and run mode picker
 	returnMode       model.ViewMode // mode to return to on cancel
 
 	// Processes
@@ -103,6 +110,16 @@ type Model struct {
 
 	// Program reference for streaming processes
 	program *tea.Program
+
+	// Tool bridge for MCP tools in streaming sessions
+	toolBridge *claude.ToolBridge
+
+	// Tool question state
+	toolQuestionProcID string
+	toolQuestionText   string
+
+	// Agents loaded from .claude/agents/
+	agents []agent.Agent
 }
 
 func NewModel(projectRoot string) Model {
@@ -115,14 +132,16 @@ func NewModel(projectRoot string) Model {
 	}
 
 	m := Model{
-		projectRoot:    projectRoot,
-		store:          s,
-		mode:           model.ModeList,
+		projectRoot:     projectRoot,
+		store:           s,
+		mode:            model.ModeList,
 		collapsedGroups: make(map[string]bool),
 		runningLabels:   make(map[string]bool),
 		processCancels:  &claude.ProcessCancels{},
+		toolBridge:      claude.NewToolBridge(projectRoot),
 		width:           80,
 		height:          24,
+		agents:          agent.LoadAgents(projectRoot),
 	}
 	m.rebuildList()
 	return m
@@ -149,6 +168,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case programReadyMsg:
 		m.program = msg.p
+		m.toolBridge.Program = msg.p
 		return m, nil
 
 	case tea.WindowSizeMsg:
@@ -197,10 +217,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case claude.StreamDoneMsg:
 		return m.handleStreamDone(msg)
 
+	case claude.UserQuestionMsg:
+		return m.handleToolQuestion(msg)
+
+	case claude.StoreChangedMsg:
+		m.reload()
+		return m, nil
+
 	case claude.ChatSubmitMsg:
 		return m.handleChatSubmit(msg)
 
 	case chatCancelMsg:
+		// If there's a pending tool question, send skip answer
+		if m.toolQuestionProcID != "" {
+			m.toolBridge.SendAnswer("(user skipped)")
+			m.toolQuestionProcID = ""
+			m.toolQuestionText = ""
+		}
 		m.mode = model.ModeProcessDetail
 		return m, nil
 
@@ -377,7 +410,7 @@ func (m Model) renderContent(contentHeight int) string {
 	case model.ModeTaskForm:
 		return m.form.View()
 
-	case model.ModeAddToGroup, model.ModeThemePicker:
+	case model.ModeAddToGroup, model.ModeThemePicker, model.ModeAgentPicker:
 		return m.selectInput.View()
 
 	case model.ModeCombineSelect:
@@ -490,7 +523,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.form, cmd = m.form.Update(msg)
 		return m, cmd
 
-	case model.ModeAddToGroup, model.ModeThemePicker:
+	case model.ModeAddToGroup, model.ModeThemePicker, model.ModeAgentPicker:
 		var cmd tea.Cmd
 		m.selectInput, cmd = m.selectInput.Update(msg)
 		// Live preview: apply theme as user navigates
@@ -731,7 +764,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleRun()
 	}
 
-	if key == "p" && (m.mode == model.ModeList || m.mode == model.ModeDetail || m.mode == model.ModeTaskView) {
+	if key == "p" && (m.mode == model.ModeList || m.mode == model.ModeDetail || m.mode == model.ModeTaskView || m.mode == model.ModePlan) {
 		return m.handlePlan()
 	}
 
@@ -785,6 +818,29 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 	if key == "y" || key == "enter" {
+		if m.action == actionRegenPlan {
+			m.action = actionNone
+			if m.confirmIsGroup {
+				g := store.FindGroup(m.store, m.confirmGroupID)
+				if g == nil {
+					m.mode = model.ModeList
+					return m, nil
+				}
+				if len(m.agents) > 0 {
+					return m.showAgentPicker(actionAgentPlan)
+				}
+				return m.spawnGroupPlanGeneration(g, nil)
+			}
+			t := store.FindTask(m.store, m.confirmTaskID)
+			if t == nil {
+				m.mode = model.ModeList
+				return m, nil
+			}
+			if len(m.agents) > 0 {
+				return m.showAgentPicker(actionAgentPlan)
+			}
+			return m.spawnPlanGeneration(t, nil)
+		}
 		if m.confirmIsGroup {
 			store.DeleteGroup(m.projectRoot, m.confirmGroupID)
 			m.reload()
@@ -801,7 +857,12 @@ func (m Model) handleConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, flashCmd("Task deleted")
 	}
 	if key == "n" || key == "esc" {
-		m.mode = model.ModeList
+		if m.action == actionRegenPlan {
+			m.action = actionNone
+			m.mode = model.ModePlan
+		} else {
+			m.mode = model.ModeList
+		}
 	}
 	return m, nil
 }
@@ -906,6 +967,45 @@ func (m Model) handleFormSubmit(data TaskFormData) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleSelectSubmit(value string) (tea.Model, tea.Cmd) {
+	if m.mode == model.ModeAgentPicker {
+		switch m.action {
+		case actionAgentPlan:
+			var a *agent.Agent
+			if value != "__default__" {
+				a = m.agentByName(value)
+			}
+			m.mode = model.ModeList
+			m.action = actionNone
+			if t := m.selectedTask(); t != nil {
+				return m.spawnPlanGeneration(t, a)
+			}
+			if g := m.selectedGroup(); g != nil {
+				return m.spawnGroupPlanGeneration(g, a)
+			}
+		case actionAgentRun:
+			var a *agent.Agent
+			if value != "__default__" {
+				a = m.agentByName(value)
+			}
+			m.actionAgent = a
+			return m.showRunModePicker()
+		case actionRunMode:
+			a := m.actionAgent
+			m.actionAgent = nil
+			m.action = actionNone
+			m.mode = model.ModeList
+			switch value {
+			case "terminal":
+				return m.executeRun(a)
+			case "background":
+				return m.spawnBackgroundRun(a)
+			}
+		}
+		m.action = actionNone
+		m.mode = model.ModeList
+		return m, nil
+	}
+
 	if m.mode == model.ModeThemePicker {
 		ApplyTheme(value)
 		cfg := store.LoadConfig(m.projectRoot)
@@ -1105,41 +1205,177 @@ func buildHierarchicalGroupSelect(s *model.TaskStore, parentID string, depth int
 }
 
 func (m Model) handleRun() (tea.Model, tea.Cmd) {
+	if m.selectedTask() == nil && m.selectedGroup() == nil {
+		return m, nil
+	}
+	if len(m.agents) > 0 {
+		return m.showAgentPicker(actionAgentRun)
+	}
+	m.actionAgent = nil
+	return m.showRunModePicker()
+}
+
+func (m Model) showRunModePicker() (tea.Model, tea.Cmd) {
+	items := []SelectItem{
+		{Label: "New terminal", Value: "terminal"},
+		{Label: "Background process", Value: "background"},
+	}
+	m.selectInput = NewSelectInput("Run mode", items)
+	m.action = actionRunMode
+	m.mode = model.ModeAgentPicker
+	return m, nil
+}
+
+func (m Model) executeRun(a *agent.Agent) (tea.Model, tea.Cmd) {
+	var systemPrompt string
 	if t := m.selectedTask(); t != nil {
-		p := prompt.BuildTaskPrompt(m.projectRoot, t)
-		return m, tea.Batch(
-			claude.SpawnInTerminal(m.projectRoot, p),
-			flashCmd("Opening claude in new terminal..."),
-		)
+		systemPrompt = prompt.BuildTaskPrompt(m.projectRoot, t)
+	} else if g := m.selectedGroup(); g != nil {
+		systemPrompt = prompt.BuildGroupPrompt(m.projectRoot, g, m.store)
+	} else {
+		return m, nil
+	}
+	if a != nil && a.SystemPrompt != "" {
+		systemPrompt = a.SystemPrompt + "\n\n---\n\n" + systemPrompt
+	}
+	return m, tea.Batch(
+		claude.SpawnInTerminal(m.projectRoot, systemPrompt),
+		flashCmd("Opening claude in new terminal..."),
+	)
+}
+
+func (m Model) spawnBackgroundRun(a *agent.Agent) (tea.Model, tea.Cmd) {
+	var title, id, promptText string
+	isTask := false
+
+	if t := m.selectedTask(); t != nil {
+		title = t.Title
+		id = t.ID
+		isTask = true
+		promptText = prompt.BuildTaskPrompt(m.projectRoot, t)
+	} else if g := m.selectedGroup(); g != nil {
+		title = g.Name
+		id = g.ID
+		promptText = prompt.BuildGroupPrompt(m.projectRoot, g, m.store)
+	} else {
+		return m, nil
+	}
+
+	label := "Run: " + title
+	if m.runningLabels[label] {
+		return m, flashCmd("Already running...")
+	}
+	m.runningLabels[label] = true
+
+	procID := fmt.Sprintf("run-%s-%d", id, time.Now().Unix())
+	proc := model.ClaudeProcess{
+		ID:            procID,
+		Label:         label,
+		Status:        model.ProcessRunning,
+		Output:        "Waiting for claude...",
+		IsInteractive: true,
+	}
+	if isTask {
+		proc.CompletionAction = model.CompletionRunTask
+		proc.CompletionMeta = map[string]string{"taskID": id}
+		store.UpdateTask(m.projectRoot, id, map[string]interface{}{"status": string(model.StatusInProgress)})
+		m.reload()
+	}
+	m.processes = append(m.processes, proc)
+
+	promptText += "\n\n" + prompt.McpToolGuidanceRun
+
+	var cmd tea.Cmd
+	if m.program != nil {
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "bypassPermissions", m.processCancels, m.toolBridge, agentSDKOpts(a)...)
+	} else {
+		return m, flashCmd("Streaming not available (no program ref)")
+	}
+
+	return m, tea.Batch(cmd, flashCmd(fmt.Sprintf("Running %s in background...", title)))
+}
+
+func (m Model) handlePlan() (tea.Model, tea.Cmd) {
+	alreadyViewing := m.mode == model.ModePlan
+
+	if t := m.selectedTask(); t != nil {
+		if t.PlanFile != "" && !alreadyViewing {
+			m.scrollOffset = 0
+			m.mode = model.ModePlan
+			return m, nil
+		}
+		if t.PlanFile != "" && alreadyViewing {
+			// Confirm before regenerating existing plan
+			m.confirmMsg = fmt.Sprintf("Regenerate plan for \"%s\"?", t.Title)
+			m.confirmTaskID = t.ID
+			m.confirmIsGroup = false
+			m.action = actionRegenPlan
+			m.mode = model.ModeConfirmDelete
+			return m, nil
+		}
+		if len(m.agents) > 0 {
+			return m.showAgentPicker(actionAgentPlan)
+		}
+		return m.spawnPlanGeneration(t, nil)
 	}
 	if g := m.selectedGroup(); g != nil {
-		p := prompt.BuildGroupPrompt(m.projectRoot, g, m.store)
-		return m, tea.Batch(
-			claude.SpawnInTerminal(m.projectRoot, p),
-			flashCmd("Opening claude in new terminal..."),
-		)
+		if g.PlanFile != "" && !alreadyViewing {
+			m.scrollOffset = 0
+			m.mode = model.ModePlan
+			return m, nil
+		}
+		if g.PlanFile != "" && alreadyViewing {
+			m.confirmMsg = fmt.Sprintf("Regenerate plan for \"%s\"?", g.Name)
+			m.confirmGroupID = g.ID
+			m.confirmIsGroup = true
+			m.action = actionRegenPlan
+			m.mode = model.ModeConfirmDelete
+			return m, nil
+		}
+		if len(m.agents) > 0 {
+			return m.showAgentPicker(actionAgentPlan)
+		}
+		return m.spawnGroupPlanGeneration(g, nil)
 	}
 	return m, nil
 }
 
-func (m Model) handlePlan() (tea.Model, tea.Cmd) {
-	if t := m.selectedTask(); t != nil {
-		if t.PlanFile != "" {
-			m.scrollOffset = 0
-			m.mode = model.ModePlan
-			return m, nil
+func (m Model) showAgentPicker(action actionContext) (tea.Model, tea.Cmd) {
+	items := []SelectItem{{Label: "Default (no agent)", Value: "__default__"}}
+	for _, a := range m.agents {
+		label := a.Name
+		if a.Description != "" {
+			label += "  " + a.Description
 		}
-		return m.spawnPlanGeneration(t)
+		items = append(items, SelectItem{Label: label, Value: a.Name})
 	}
-	if g := m.selectedGroup(); g != nil {
-		if g.PlanFile != "" {
-			m.scrollOffset = 0
-			m.mode = model.ModePlan
-			return m, nil
-		}
-		return m.spawnGroupPlanGeneration(g)
-	}
+	m.selectInput = NewSelectInput("Select agent", items)
+	m.action = action
+	m.mode = model.ModeAgentPicker
 	return m, nil
+}
+
+func (m Model) agentByName(name string) *agent.Agent {
+	for i := range m.agents {
+		if m.agents[i].Name == name {
+			return &m.agents[i]
+		}
+	}
+	return nil
+}
+
+func agentSDKOpts(a *agent.Agent) []claudecode.Option {
+	if a == nil {
+		return nil
+	}
+	var opts []claudecode.Option
+	if a.SystemPrompt != "" {
+		opts = append(opts, claudecode.WithAppendSystemPrompt(a.SystemPrompt))
+	}
+	if a.Model != "" && a.Model != "inherit" {
+		opts = append(opts, claudecode.WithModel(a.Model))
+	}
+	return opts
 }
 
 func (m Model) handleCombine() (tea.Model, tea.Cmd) {
@@ -1338,7 +1574,7 @@ func (m Model) spawnGroupAction(scopeGroupID string, instruction string) (tea.Mo
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels)
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge)
 	} else {
 		projectRoot := m.projectRoot
 		cmd = func() tea.Msg {
@@ -1438,7 +1674,7 @@ func applyGroupActionResult(projectRoot string, output string) {
 
 // --- Process management ---
 
-func (m Model) spawnPlanGeneration(task *model.Task) (tea.Model, tea.Cmd) {
+func (m Model) spawnPlanGeneration(task *model.Task, a *agent.Agent) (tea.Model, tea.Cmd) {
 	label := "Plan: " + task.Title
 	if m.runningLabels[label] {
 		return m, flashCmd("Already generating...")
@@ -1468,7 +1704,7 @@ func (m Model) spawnPlanGeneration(task *model.Task) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels)
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, agentSDKOpts(a)...)
 	} else {
 		projectRoot := m.projectRoot
 		taskID := task.ID
@@ -1488,7 +1724,7 @@ func (m Model) spawnPlanGeneration(task *model.Task) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmd, flashCmd(fmt.Sprintf("Generating plan for %s...", task.ID)))
 }
 
-func (m Model) spawnGroupPlanGeneration(group *model.Group) (tea.Model, tea.Cmd) {
+func (m Model) spawnGroupPlanGeneration(group *model.Group, a *agent.Agent) (tea.Model, tea.Cmd) {
 	label := "Plan: " + group.Name
 	if m.runningLabels[label] {
 		return m, flashCmd("Already generating...")
@@ -1512,7 +1748,7 @@ func (m Model) spawnGroupPlanGeneration(group *model.Group) (tea.Model, tea.Cmd)
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels)
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, agentSDKOpts(a)...)
 	} else {
 		projectRoot := m.projectRoot
 		groupID := group.ID
@@ -1569,7 +1805,7 @@ func (m Model) executeCombinePlans(taskIDs []string, name string) (tea.Model, te
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels)
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, nil)
 	} else {
 		projectRoot := m.projectRoot
 		planName := name
@@ -1623,7 +1859,7 @@ func (m Model) executeFollowUp(taskID, question string) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels)
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge)
 	} else {
 		projectRoot := m.projectRoot
 		hasPlanFile := task.PlanFile != ""
@@ -1669,7 +1905,54 @@ func (m Model) handleStreamEvent(msg claude.StreamEventMsg) (tea.Model, tea.Cmd)
 	return m, nil
 }
 
+func (m Model) handleToolQuestion(msg claude.UserQuestionMsg) (tea.Model, tea.Cmd) {
+	// Append a tool question event to the process
+	for i := range m.processes {
+		if m.processes[i].ID == msg.ProcessID {
+			m.processes[i].Events = append(m.processes[i].Events, model.StreamEvent{
+				Kind: model.EventToolQuestion,
+				Text: msg.Question,
+			})
+			break
+		}
+	}
+
+	m.toolQuestionProcID = msg.ProcessID
+	m.toolQuestionText = msg.Question
+
+	// Find the process index so we can show it
+	for i := range m.processes {
+		if m.processes[i].ID == msg.ProcessID {
+			m.processIdx = i
+			break
+		}
+	}
+
+	// Init chat input with question as placeholder
+	m.chatInput = ChatInputModel{
+		ProcessID:   msg.ProcessID,
+		Placeholder: msg.Question,
+	}
+	// Find the session ID from the process
+	for _, proc := range m.processes {
+		if proc.ID == msg.ProcessID {
+			m.chatInput.SessionID = proc.SessionID
+			break
+		}
+	}
+
+	m.mode = model.ModeProcessChat
+	m.scrollOffset = 999999 // Scroll to bottom
+	return m, nil
+}
+
 func (m Model) handleStreamDone(msg claude.StreamDoneMsg) (tea.Model, tea.Cmd) {
+	// Clear tool question state if this process had a pending question
+	if m.toolQuestionProcID == msg.ProcessID {
+		m.toolQuestionProcID = ""
+		m.toolQuestionText = ""
+	}
+
 	for i := range m.processes {
 		if m.processes[i].ID != msg.ProcessID {
 			continue
@@ -1706,15 +1989,34 @@ func (m Model) handleStreamDone(msg claude.StreamDoneMsg) (tea.Model, tea.Cmd) {
 	}
 	m.reload()
 
-	// Auto-remove non-interactive done processes after 5s
+	// Auto-remove non-interactive done/errored processes after 5s
 	for _, proc := range m.processes {
-		if proc.ID == msg.ProcessID && !proc.IsInteractive && proc.Status == model.ProcessDone {
+		if proc.ID == msg.ProcessID && !proc.IsInteractive &&
+			(proc.Status == model.ProcessDone || proc.Status == model.ProcessError) {
 			return m, tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
 				return ProcessAutoRemoveMsg{ID: msg.ProcessID}
 			})
 		}
 	}
 	return m, nil
+}
+
+// extractPlanContent checks if Claude wrote a markdown file during the session.
+// If so, reads that file's content. Otherwise falls back to finalText.
+func extractPlanContent(events []model.StreamEvent, finalText string) string {
+	// Scan for the last Write tool use targeting a .md file
+	var lastMdPath string
+	for _, ev := range events {
+		if ev.Kind == model.EventToolUse && ev.ToolName == "Write" && strings.HasSuffix(ev.ToolInput, ".md") {
+			lastMdPath = ev.ToolInput
+		}
+	}
+	if lastMdPath != "" {
+		if data, err := os.ReadFile(lastMdPath); err == nil && len(data) > 0 {
+			return string(data)
+		}
+	}
+	return finalText
 }
 
 func (m *Model) runCompletionAction(proc *model.ClaudeProcess, finalText string) {
@@ -1729,13 +2031,15 @@ func (m *Model) runCompletionAction(proc *model.ClaudeProcess, finalText string)
 		taskID := meta["taskID"]
 		taskTitle := meta["taskTitle"]
 		filename := store.PlanFilenameForTask(&model.Task{ID: taskID, Title: taskTitle})
-		store.SavePlan(projectRoot, filename, finalText)
+		planContent := extractPlanContent(proc.Events, finalText)
+		store.SavePlan(projectRoot, filename, planContent)
 		store.UpdateTask(projectRoot, taskID, map[string]interface{}{"planFile": filename})
 
 	case model.CompletionSaveGroupPlan:
 		groupID := meta["groupID"]
 		filename := store.PlanFilenameForGroup(&model.Group{ID: groupID})
-		store.SavePlan(projectRoot, filename, finalText)
+		planContent := extractPlanContent(proc.Events, finalText)
+		store.SavePlan(projectRoot, filename, planContent)
 		s, _ := store.LoadStore(projectRoot)
 		if g := store.FindGroup(s, groupID); g != nil {
 			g.PlanFile = filename
@@ -1762,11 +2066,37 @@ func (m *Model) runCompletionAction(proc *model.ClaudeProcess, finalText string)
 		if meta["hasPlanFile"] != "true" {
 			store.UpdateTask(projectRoot, taskID, map[string]interface{}{"planFile": planFile})
 		}
+
+	case model.CompletionRunTask:
+		taskID := meta["taskID"]
+		if taskID != "" {
+			store.UpdateTask(projectRoot, taskID, map[string]interface{}{"status": string(model.StatusDone)})
+		}
 	}
 }
 
 func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
-	// Append user message event to the process
+	// If this is answering a tool question, send the answer through the bridge
+	if m.toolQuestionProcID == msg.ProcessID {
+		// Append user answer event
+		for i := range m.processes {
+			if m.processes[i].ID == msg.ProcessID {
+				m.processes[i].Events = append(m.processes[i].Events, model.StreamEvent{
+					Kind: model.EventUserMsg,
+					Text: msg.Message,
+				})
+				break
+			}
+		}
+		m.toolBridge.SendAnswer(msg.Message)
+		m.toolQuestionProcID = ""
+		m.toolQuestionText = ""
+		m.mode = model.ModeProcessDetail
+		m.scrollOffset = 999999
+		return m, nil
+	}
+
+	// Normal follow-up: append user message event and resume session
 	for i := range m.processes {
 		if m.processes[i].ID == msg.ProcessID {
 			m.processes[i].Events = append(m.processes[i].Events, model.StreamEvent{
@@ -1781,7 +2111,7 @@ func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
 	m.mode = model.ModeProcessDetail
 	m.scrollOffset = 999999 // Scroll to bottom
 
-	return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, msg.ProcessID, msg.SessionID, msg.Message, m.processCancels)
+	return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, msg.ProcessID, msg.SessionID, msg.Message, m.processCancels, m.toolBridge)
 }
 
 func (m Model) handleProcessDone(msg claude.ProcessDoneMsg) (tea.Model, tea.Cmd) {

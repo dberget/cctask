@@ -66,6 +66,10 @@ func renderRichProcessDetail(proc *model.ClaudeProcess, width int) string {
 			lines = append(lines, styleMagenta.Render("You: ")+wrapText(ev.Text, contentWidth-5))
 			lines = append(lines, "")
 
+		case model.EventToolQuestion:
+			lines = append(lines, styleYellow.Render("? "+ev.Text))
+			lines = append(lines, "")
+
 		case model.EventSystem:
 			lines = append(lines, styleDim.Render("• "+ev.Text))
 		}

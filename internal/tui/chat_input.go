@@ -10,10 +10,11 @@ import (
 
 // ChatInputModel is a text input for the embedded process chat.
 type ChatInputModel struct {
-	Value     string
-	Cursor    int
-	ProcessID string
-	SessionID string
+	Value       string
+	Cursor      int
+	ProcessID   string
+	SessionID   string
+	Placeholder string
 }
 
 func NewChatInput(processID, sessionID string) ChatInputModel {
@@ -80,7 +81,10 @@ func (m ChatInputModel) Update(msg tea.KeyMsg) (ChatInputModel, tea.Cmd) {
 
 func (m ChatInputModel) View() string {
 	displayValue := m.Value
-	placeholder := "Type a follow-up message..."
+	placeholder := m.Placeholder
+	if placeholder == "" {
+		placeholder = "Type a follow-up message..."
+	}
 	isPlaceholder := false
 	if displayValue == "" {
 		displayValue = placeholder
