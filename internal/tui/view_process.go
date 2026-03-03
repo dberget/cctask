@@ -56,8 +56,7 @@ func renderRichProcessDetail(proc *model.ClaudeProcess, width int) string {
 			lines = append(lines, label)
 
 		case model.EventText:
-			text := wrapText(ev.Text, contentWidth)
-			lines = append(lines, text)
+			lines = append(lines, renderMarkdown(ev.Text, contentWidth))
 
 		case model.EventToolUse:
 			lines = append(lines, renderToolUse(ev, contentWidth))

@@ -2243,6 +2243,14 @@ func (m Model) handleStreamDone(msg claude.StreamDoneMsg) (tea.Model, tea.Cmd) {
 				Text:    "Error: " + msg.Err.Error(),
 				IsError: true,
 			})
+			// Revert planning status on error
+			if proc.CompletionAction == model.CompletionSavePlan {
+				if taskID := proc.CompletionMeta["taskID"]; taskID != "" {
+					store.UpdateTask(m.projectRoot, taskID, map[string]interface{}{
+						"status": string(model.StatusPending),
+					})
+				}
+			}
 			break
 		}
 
@@ -2303,7 +2311,10 @@ func (m *Model) runCompletionAction(proc *model.ClaudeProcess, finalText string)
 		filename := store.PlanFilenameForTask(&model.Task{ID: taskID, Title: taskTitle})
 		planContent := extractPlanContent(proc.Events, finalText)
 		store.SavePlan(projectRoot, filename, planContent)
-		store.UpdateTask(projectRoot, taskID, map[string]interface{}{"planFile": filename})
+		store.UpdateTask(projectRoot, taskID, map[string]interface{}{
+			"planFile": filename,
+			"status":   string(model.StatusPending),
+		})
 
 	case model.CompletionSaveGroupPlan:
 		groupID := meta["groupID"]
@@ -2399,6 +2410,14 @@ func (m Model) handleProcessDone(msg claude.ProcessDoneMsg) (tea.Model, tea.Cmd)
 					m.processes[i].Output = msg.Output
 				} else {
 					m.processes[i].Output = "Done (no output)"
+				}
+			}
+			// Revert planning status when process completes (success or error)
+			if m.processes[i].CompletionAction == model.CompletionSavePlan {
+				if taskID := m.processes[i].CompletionMeta["taskID"]; taskID != "" {
+					store.UpdateTask(m.projectRoot, taskID, map[string]interface{}{
+						"status": string(model.StatusPending),
+					})
 				}
 			}
 			delete(m.runningLabels, m.processes[i].Label)

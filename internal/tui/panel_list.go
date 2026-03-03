@@ -108,7 +108,7 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 				hasPlan := item.Project.PlanFile != "" && store.PlanExists(projectRoot, item.Project.PlanFile)
 				planMark := ""
 				if hasPlan {
-					planMark = styleGreen.Render(" ✓")
+					planMark = styleCyan.Render(" ✓")
 				}
 				line := depthIndent + chevronStyle.Render(chevron+" ") +
 					nameStyle.Render(truncate(item.Project.Name, maxName)) +
@@ -161,27 +161,25 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 			}
 
 			hasPlan := task.PlanFile != "" && store.PlanExists(projectRoot, task.PlanFile)
-			planMark := ""
-			if hasPlan {
-				planMark = styleGreen.Render(" ✓")
-			}
 
 			idStyle := styleGray
 			if isMerged && !isSelected {
 				idStyle = styleDim
 			}
 
-			// Use spinner frame for planning tasks instead of static icon
+			// Single icon: plan ✓ (indigo) replaces status circle when plan exists,
+			// done ✓ (green) takes priority when task is done
 			icon := statusIcon(string(task.Status))
 			if task.Status == model.StatusPlanning {
 				icon = styleMagenta.Render(spinnerFrame)
+			} else if hasPlan && task.Status != model.StatusDone && task.Status != model.StatusMerged {
+				icon = styleCyan.Render("✓")
 			}
 
 			line := lipgloss.NewStyle().Foreground(nameColor).Render(indent) +
 				idStyle.Render(padRight(task.ID, 5)) +
 				lipgloss.NewStyle().Foreground(nameColor).Render(truncate(task.Title, nameWidth)) +
-				"  " + icon +
-				planMark
+				"  " + icon
 			lines = append(lines, line)
 		}
 	}

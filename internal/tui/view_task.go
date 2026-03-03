@@ -35,7 +35,7 @@ func renderTaskView(task *model.Task, projectRoot string, width int) string {
 		sepWidth := min(width-2, 50)
 		lines = append(lines, sectionHeader("Description", sepWidth))
 		lines = append(lines, "")
-		lines = append(lines, wrapText(task.Description, width-2))
+		lines = append(lines, renderMarkdown(task.Description, width-2))
 	}
 
 	lines = append(lines, "")

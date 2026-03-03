@@ -107,7 +107,7 @@ func renderTaskDetail(task *model.Task, projectRoot string, width int) string {
 		sepWidth := min(width-2, 50)
 		lines = append(lines, sectionHeader("Description", sepWidth))
 		lines = append(lines, "")
-		lines = append(lines, wrapText(task.Description, width-2))
+		lines = append(lines, renderMarkdown(task.Description, width-2))
 	}
 
 	if hasPlan {
@@ -117,7 +117,7 @@ func renderTaskDetail(task *model.Task, projectRoot string, width int) string {
 			sepWidth := min(width-2, 50)
 			lines = append(lines, sectionHeader("Plan (preview)", sepWidth))
 			lines = append(lines, "")
-			lines = append(lines, truncateLines(wrapText(plan, width-2), 15))
+			lines = append(lines, truncateLines(renderMarkdown(plan, width-2), 15))
 		}
 	}
 
@@ -149,7 +149,7 @@ func renderGroupDetail(group *model.Group, s *model.TaskStore, projectRoot strin
 
 	if group.Description != "" {
 		lines = append(lines, "")
-		lines = append(lines, wrapText(group.Description, width-2))
+		lines = append(lines, renderMarkdown(group.Description, width-2))
 	}
 
 	lines = append(lines, "")
