@@ -202,6 +202,8 @@ func UpdateTask(projectRoot string, id string, updates map[string]interface{}) (
 		case "status":
 			if val, ok := v.(model.TaskStatus); ok {
 				task.Status = val
+			} else if val, ok := v.(string); ok {
+				task.Status = model.TaskStatus(val)
 			}
 		case "tags":
 			if val, ok := v.([]string); ok {
