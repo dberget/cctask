@@ -534,13 +534,7 @@ func (m Model) View() string {
 	var statusRendered string
 	if m.mode == model.ModeCommandBar {
 		barView := m.commandBar.View(m.width)
-		sugView := m.commandBar.SuggestionsView(m.width)
-		if sugView != "" {
-			statusRendered = lipgloss.NewStyle().PaddingLeft(2).Render(sugView) + "\n" +
-				lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(barView)
-		} else {
-			statusRendered = lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(barView)
-		}
+		statusRendered = lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(barView)
 	} else {
 		statusBar := renderStatusBar(m.helpModel, m.keys, m.mode, m.selectedItem, m.message, m.width)
 		statusRendered = lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(statusBar)
@@ -561,6 +555,22 @@ func (m Model) View() string {
 	if len(contentLines) > maxContentLines {
 		contentLines = contentLines[:maxContentLines]
 		content = strings.Join(contentLines, "\n")
+	}
+
+	// Overlay suggestions at the bottom of content area when command bar is active
+	if m.mode == model.ModeCommandBar {
+		sugView := m.commandBar.SuggestionsView(m.width)
+		if sugView != "" {
+			sugRendered := lipgloss.NewStyle().PaddingLeft(2).Render(sugView)
+			sugLines := strings.Split(sugRendered, "\n")
+			// Replace the last N lines of content with the suggestions
+			contentLines = strings.Split(content, "\n")
+			if len(sugLines) < len(contentLines) {
+				contentLines = contentLines[:len(contentLines)-len(sugLines)]
+				contentLines = append(contentLines, sugLines...)
+				content = strings.Join(contentLines, "\n")
+			}
+		}
 	}
 
 	page := lipgloss.JoinVertical(lipgloss.Left,
