@@ -97,10 +97,6 @@ func scanSkillDir(dir string) []Skill {
 		if err != nil {
 			continue
 		}
-		// Default name from the parent directory name (not the filename)
-		if s.Name == "" {
-			s.Name = e.Name()
-		}
 		skills = append(skills, *s)
 	}
 	return skills
