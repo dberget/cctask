@@ -205,6 +205,7 @@ func listModeBindings(keys KeyBindings, sel *model.ListItem) []key.Binding {
 	if isGroup {
 		bindings = append(bindings, keys.Collapse)
 	}
+	bindings = append(bindings, key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "command")))
 	bindings = append(bindings, keys.Help, keys.Quit)
 	return bindings
 }

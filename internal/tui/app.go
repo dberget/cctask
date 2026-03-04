@@ -85,6 +85,7 @@ type Model struct {
 	form        FormModel
 	editor      EditorModel
 	chatInput   ChatInputModel
+	commandBar  CommandBarModel
 
 	// Action context
 	action           actionContext
@@ -183,6 +184,15 @@ func NewModel(projectRoot string) Model {
 	pg.SetTotalPages(0)
 	pg.PerPage = 4
 
+	reg := NewCommandRegistry()
+	registerCommands(reg, func() []string {
+		var names []string
+		for _, g := range s.Groups {
+			names = append(names, g.ID)
+		}
+		return names
+	})
+
 	m := Model{
 		projectRoot:     projectRoot,
 		store:           s,
@@ -203,6 +213,8 @@ func NewModel(projectRoot string) Model {
 		spinner:            sp,
 		processPaginator:   pg,
 	}
+	m.commandBar = NewCommandBar()
+	m.commandBar.registry = reg
 	m.rebuildList()
 	return m
 }
@@ -442,6 +454,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.form.workDir.SetValue(msg.path)
 		m.mode = model.ModeTaskForm
 		return m, nil
+
+	case CommandSubmitMsg:
+		return m.executeCommand(msg.Input)
+
+	case CommandCancelMsg:
+		m.mode = model.ModeList
+		return m, nil
+
+	case cmdQuitMsg:
+		m.processCancels.CancelAll()
+		return m, tea.Quit
+
+	case cmdThemeMsg:
+		ApplyTheme(msg.name)
+		applyThemeToBubbles(&m)
+		cfg := store.LoadConfig(m.projectRoot)
+		cfg.Theme = msg.name
+		store.SaveConfig(m.projectRoot, cfg)
+		m.mode = model.ModeList
+		return m, flashCmd("Theme: " + msg.name)
+
+	case cmdFilterMsg:
+		m.filter = msg.text
+		m.mode = model.ModeList
+		m.rebuildList()
+		return m, flashCmd("Filter: " + msg.text)
+
+	case cmdSortMsg:
+		m.mode = model.ModeList
+		return m, flashCmd("Sort: " + msg.field)
+
+	case cmdModelMsg:
+		cfg := store.LoadConfig(m.projectRoot)
+		cfg.Model = msg.name
+		store.SaveConfig(m.projectRoot, cfg)
+		m.mode = model.ModeList
+		return m, flashCmd("Model: " + msg.name)
+
+	case cmdExportMsg:
+		m.mode = model.ModeList
+		return m, flashCmd("Export " + msg.format + " — not yet implemented")
+
+	case cmdSetMsg:
+		m.mode = model.ModeList
+		return m, flashCmd("Set " + msg.key + "=" + msg.value)
+
+	case cmdCdMsg:
+		return m.handleCd(msg.group)
+
+	case cmdHelpMsg:
+		return m.handleCommandHelp(msg.command)
 	}
 
 	// Forward non-key messages to the filepicker so it can receive readDirMsg
@@ -466,8 +529,20 @@ func (m Model) View() string {
 	}
 
 	header := m.renderHeader(projectName)
-	statusBar := renderStatusBar(m.helpModel, m.keys, m.mode, m.selectedItem, m.message, m.width)
-	statusRendered := lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(statusBar)
+	var statusRendered string
+	if m.mode == model.ModeCommandBar {
+		barView := m.commandBar.View(m.width)
+		sugView := m.commandBar.SuggestionsView(m.width)
+		if sugView != "" {
+			statusRendered = lipgloss.NewStyle().PaddingLeft(2).Render(sugView) + "\n" +
+				lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(barView)
+		} else {
+			statusRendered = lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(barView)
+		}
+	} else {
+		statusBar := renderStatusBar(m.helpModel, m.keys, m.mode, m.selectedItem, m.message, m.width)
+		statusRendered = lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(statusBar)
+	}
 
 	// Measure actual rendered heights to calculate available content space
 	headerHeight := len(strings.Split(header, "\n"))
@@ -821,6 +896,11 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.multiCheck, cmd = m.multiCheck.Update(msg)
 		return m, cmd
 
+	case model.ModeCommandBar:
+		var cmd tea.Cmd
+		m.commandBar, cmd = m.commandBar.Update(msg)
+		return m, cmd
+
 	case model.ModeConfirmDelete:
 		return m.handleConfirm(msg)
 
@@ -952,6 +1032,12 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mode = model.ModeHelp
 			m.viewport.GotoTop()
 		}
+		return m, nil
+	}
+
+	if k == ":" && m.mode.IsNavigable() {
+		m.commandBar = m.commandBar.Activate()
+		m.mode = model.ModeCommandBar
 		return m, nil
 	}
 
@@ -3125,4 +3211,61 @@ func pluralize(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+func (m Model) executeCommand(input string) (tea.Model, tea.Cmd) {
+	parts := strings.Fields(input)
+	if len(parts) == 0 {
+		m.mode = model.ModeList
+		return m, nil
+	}
+	cmdName := parts[0]
+	args := parts[1:]
+
+	cmd, ok := m.commandBar.registry.Lookup(cmdName)
+	if !ok {
+		m.mode = model.ModeList
+		return m, flashCmd("Unknown command: " + cmdName)
+	}
+	m.mode = model.ModeList
+	return m, cmd.Execute(args)
+}
+
+func (m Model) handleCd(group string) (tea.Model, tea.Cmd) {
+	for i, item := range m.listItems {
+		if item.Project != nil && item.Project.ID == group {
+			m.listIndex = i
+			m.selectedItem = &m.listItems[i]
+			m.mode = model.ModeList
+			return m, flashCmd("Navigated to " + group)
+		}
+	}
+	m.mode = model.ModeList
+	return m, flashCmd("Group not found: " + group)
+}
+
+func (m Model) handleCommandHelp(command string) (tea.Model, tea.Cmd) {
+	if command == "" {
+		var lines []string
+		for _, cmd := range m.commandBar.registry.AllCommands() {
+			lines = append(lines, cmd.Name+" — "+cmd.Description)
+		}
+		m.mode = model.ModeList
+		return m, flashCmd(strings.Join(lines, " | "))
+	}
+	cmd, ok := m.commandBar.registry.Lookup(command)
+	if !ok {
+		m.mode = model.ModeList
+		return m, flashCmd("Unknown command: " + command)
+	}
+	desc := cmd.Name + " — " + cmd.Description
+	if len(cmd.Args) > 0 {
+		var argNames []string
+		for _, a := range cmd.Args {
+			argNames = append(argNames, a.Name)
+		}
+		desc += " (args: " + strings.Join(argNames, ", ") + ")"
+	}
+	m.mode = model.ModeList
+	return m, flashCmd(desc)
 }

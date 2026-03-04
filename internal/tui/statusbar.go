@@ -109,6 +109,14 @@ func renderHelp(h help.Model, keys KeyBindings) string {
 	lines = append(lines, k("Esc", "Cancel"))
 	lines = append(lines, "")
 
+	lines = append(lines, hdr("Command Bar"))
+	lines = append(lines, k(":", "Open command bar"))
+	lines = append(lines, k("Tab", "Complete command/arg"))
+	lines = append(lines, k("Up/Down", "History / suggestions"))
+	lines = append(lines, k("Enter", "Execute"))
+	lines = append(lines, k("Esc", "Cancel"))
+	lines = append(lines, "")
+
 	lines = append(lines, styleGray.Render("Press ? or Esc to close"))
 
 	_ = h     // help model available for future auto-generation
