@@ -280,6 +280,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.viewport.Width = msg.Width - 4 // account for padding
 		m.viewport.Height = vpHeight
+		if m.mode == model.ModeProcessChat {
+			m.viewport.Height-- // make room for chat input line
+		}
 		if m.mode == model.ModeEditPlan || m.mode == model.ModeBulkAdd {
 			m.editor.VH = msg.Height - 10
 			m.editor.VW = msg.Width - 12
@@ -346,6 +349,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case chatCancelMsg:
 		m.processAutoScroll = true
 		m.mode = model.ModeProcessDetail
+		m.viewport.Height++ // restore space from chat input line
 		return m, nil
 
 	case ProcessAutoRemoveMsg:
@@ -1163,6 +1167,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.chatInput = NewChatInput(proc.ID, proc.SessionID)
 			m.chatInput.inner.Placeholder = "Queue message (sent when turn completes)..."
 			m.mode = model.ModeProcessChat
+			m.viewport.Height-- // make room for chat input line
 			return m, nil
 		}
 		if proc.SessionID == "" {
@@ -1170,6 +1175,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.chatInput = NewChatInput(proc.ID, proc.SessionID)
 		m.mode = model.ModeProcessChat
+		m.viewport.Height-- // make room for chat input line
 		return m, nil
 	}
 
@@ -2942,6 +2948,7 @@ func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
 			})
 			m.processAutoScroll = true
 			m.mode = model.ModeProcessDetail
+			m.viewport.Height++ // restore space from chat input line
 			m.viewport.GotoBottom()
 			return m, flashCmd("Message queued — will send when turn completes")
 		}
@@ -2958,6 +2965,7 @@ func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
 		m.processInputs.Send(msg.ProcessID, msg.Message)
 		m.processAutoScroll = true
 		m.mode = model.ModeProcessDetail
+		m.viewport.Height++ // restore space from chat input line
 		m.viewport.GotoBottom()
 		return m, nil
 	}
@@ -2976,6 +2984,7 @@ func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
 
 	m.processAutoScroll = true
 	m.mode = model.ModeProcessDetail
+	m.viewport.Height++ // restore space from chat input line
 	m.viewport.GotoBottom()
 
 	return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, msg.ProcessID, msg.SessionID, msg.Message, m.processCancels, m.processTimeout())
