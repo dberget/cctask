@@ -47,7 +47,7 @@ func listLineForIndex(s *model.TaskStore, items []model.ListItem, targetIndex in
 	return lineNum
 }
 
-func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListItem, selectedIndex int, isFocused bool, height int, collapsed map[string]bool, scrollOffset int, spinnerFrame string) string {
+func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListItem, selectedIndex int, isFocused bool, height int, collapsed map[string]bool, scrollOffset int, spinnerFrame string, activeTaskIDs map[string]bool) string {
 	hasProjects := len(s.Groups) > 0
 
 	titleColor := colorWhite
@@ -169,9 +169,9 @@ func renderListPanel(s *model.TaskStore, projectRoot string, items []model.ListI
 
 			// Single icon: plan ✓ (indigo) replaces status circle when plan exists,
 			// done ✓ (green) takes priority when task is done.
-			// Planning spinner only shows while plan is not yet saved.
+			// Spinner shows while a plan or run process is actively running.
 			icon := statusIcon(string(task.Status))
-			if task.Status == model.StatusPlanning && !hasPlan {
+			if (task.Status == model.StatusPlanning && !hasPlan) || (task.Status == model.StatusInProgress && activeTaskIDs[task.ID]) {
 				icon = styleMagenta.Render(spinnerFrame)
 			} else if hasPlan && task.Status != model.StatusDone && task.Status != model.StatusMerged {
 				icon = styleCyan.Render("✓")

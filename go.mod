@@ -7,7 +7,6 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
-	github.com/severity1/claude-agent-sdk-go v0.6.12
 	github.com/spf13/cobra v1.10.2
 )
 

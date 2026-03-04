@@ -30,7 +30,6 @@ import (
 	"github.com/davidberget/cctask-go/internal/prompt"
 	"github.com/davidberget/cctask-go/internal/skill"
 	"github.com/davidberget/cctask-go/internal/store"
-	claudecode "github.com/severity1/claude-agent-sdk-go"
 )
 
 // programReadyMsg carries the tea.Program reference for streaming processes.
@@ -100,6 +99,7 @@ type Model struct {
 	processes      []model.ClaudeProcess
 	runningLabels  map[string]bool
 	processCancels *claude.ProcessCancels
+	processInputs  *claude.ProcessInputs
 
 	// Combine flow state
 	combineSelectedIDs []string
@@ -147,13 +147,6 @@ type Model struct {
 	// Program reference for streaming processes
 	program *tea.Program
 
-	// Tool bridge for MCP tools in streaming sessions
-	toolBridge *claude.ToolBridge
-
-	// Tool question state
-	toolQuestionProcID string
-	toolQuestionText   string
-
 	// Agents loaded from .claude/agents/
 	agents []agent.Agent
 
@@ -198,7 +191,7 @@ func NewModel(projectRoot string) Model {
 		collapsedGroups: make(map[string]bool),
 		runningLabels:   make(map[string]bool),
 		processCancels:  &claude.ProcessCancels{},
-		toolBridge:      claude.NewToolBridge(projectRoot),
+		processInputs:   &claude.ProcessInputs{},
 		width:           80,
 		height:          24,
 		agents:          agent.LoadAgents(projectRoot),
@@ -263,7 +256,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case programReadyMsg:
 		m.program = msg.p
-		m.toolBridge.Program = msg.p
 		return m, nil
 
 	case spinner.TickMsg:
@@ -342,23 +334,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case claude.StreamDoneMsg:
 		return m.handleStreamDone(msg)
 
-	case claude.UserQuestionMsg:
-		return m.handleToolQuestion(msg)
-
-	case claude.StoreChangedMsg:
-		m.reload()
-		return m, nil
+	case claude.StreamWaitingMsg:
+		return m.handleStreamWaiting(msg)
 
 	case claude.ChatSubmitMsg:
 		return m.handleChatSubmit(msg)
 
 	case chatCancelMsg:
-		// If there's a pending tool question, send skip answer
-		if m.toolQuestionProcID != "" {
-			m.toolBridge.SendAnswer("(user skipped)")
-			m.toolQuestionProcID = ""
-			m.toolQuestionText = ""
-		}
 		m.processAutoScroll = true
 		m.mode = model.ModeProcessDetail
 		return m, nil
@@ -453,6 +435,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.form.workDir.SetValue(msg.path)
 		m.mode = model.ModeTaskForm
 		return m, nil
+	}
+
+	// Forward non-key messages to the filepicker so it can receive readDirMsg
+	if m.mode == model.ModeFilePicker || m.mode == model.ModeFormDirPicker {
+		var cmd tea.Cmd
+		m.filePicker, cmd = m.filePicker.Update(msg)
+		return m, cmd
 	}
 
 	return m, nil
@@ -609,6 +598,19 @@ func (m *Model) selectedAllTasks() bool {
 	return m.selectedItem != nil && m.selectedItem.Kind == model.ListItemAllTasks
 }
 
+// activeProcessTaskIDs returns task IDs that have a running process.
+func (m *Model) activeProcessTaskIDs() map[string]bool {
+	ids := make(map[string]bool)
+	for _, p := range m.processes {
+		if p.Status == model.ProcessRunning {
+			if taskID := p.CompletionMeta["taskID"]; taskID != "" {
+				ids[taskID] = true
+			}
+		}
+	}
+	return ids
+}
+
 // --- Rendering ---
 
 func (m Model) renderHeader(projectName string) string {
@@ -674,7 +676,7 @@ func (m Model) renderContent(contentHeight int) string {
 		return ""
 
 	case model.ModeProcessDetail:
-		if m.processIdx < len(m.processes) {
+		if m.processIdx >= 0 && m.processIdx < len(m.processes) {
 			content := renderRichProcessDetail(&m.processes[m.processIdx], m.width-8)
 			wasAtBottom := m.viewport.AtBottom()
 			m.viewport.SetContent(content)
@@ -686,7 +688,7 @@ func (m Model) renderContent(contentHeight int) string {
 		return ""
 
 	case model.ModeProcessChat:
-		if m.processIdx < len(m.processes) {
+		if m.processIdx >= 0 && m.processIdx < len(m.processes) {
 			content := renderRichProcessDetail(&m.processes[m.processIdx], m.width-8)
 			wasAtBottom := m.viewport.AtBottom()
 			m.viewport.SetContent(content)
@@ -727,8 +729,9 @@ func (m Model) renderListView() string {
 	hasProcesses := len(m.processes) > 0
 
 	listHeight := m.height - 8
+	activeTaskIDs := m.activeProcessTaskIDs()
 	listPanel := renderListPanel(m.store, m.projectRoot, m.listItems, m.listIndex,
-		m.focusPanel == model.FocusMain, listHeight, m.collapsedGroups, m.listScrollOffset, m.spinner.View())
+		m.focusPanel == model.FocusMain, listHeight, m.collapsedGroups, m.listScrollOffset, m.spinner.View(), activeTaskIDs)
 
 	detailWidth := m.width - listPanelWidth - separatorWidth*2 - 4
 	if hasProcesses {
@@ -1119,16 +1122,22 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, flashCmd("Could not cancel process")
 			}
+			// For waiting processes with a live subprocess, end the conversation
+			if proc.Status == model.ProcessWaiting && m.processInputs.Has(proc.ID) {
+				m.processInputs.Close(proc.ID)
+				m.processCancels.Cancel(proc.ID)
+				return m, flashCmd("Ending conversation...")
+			}
 			// Remove non-running processes from the list
 			m.processes = append(m.processes[:m.processIdx], m.processes[m.processIdx+1:]...)
 			if m.processIdx >= len(m.processes) {
-				m.processIdx = len(m.processes) - 1
-			}
-			if m.mode == model.ModeProcessDetail {
-				m.mode = model.ModeList
+				m.processIdx = max(0, len(m.processes)-1)
 			}
 			if len(m.processes) == 0 {
 				m.focusPanel = model.FocusMain
+				m.mode = model.ModeList
+			} else if m.mode == model.ModeProcessDetail {
+				m.mode = model.ModeList
 			}
 			return m, flashCmd("Removed process")
 		}
@@ -1586,7 +1595,7 @@ func (m Model) spawnBulkAdd(bulkText string) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout())
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, m.processCancels, m.processTimeout(), claude.CLIOptions{PermissionMode: "plan"}, nil)
 	} else {
 		projectRoot := m.projectRoot
 		cmd = func() tea.Msg {
@@ -1887,21 +1896,22 @@ func (m Model) spawnBackgroundRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 	}
 	m.addProcess(&proc)
 
-	promptText += "\n\n" + prompt.McpToolGuidanceRun
-
-	extraOpts := agentSDKOpts(a)
+	opts := buildCLIOptsFromAgent(a)
+	opts.PermissionMode = "bypassPermissions"
 	if isTask {
 		if t := m.selectedTask(); t != nil && len(t.Skills) > 0 {
-			extraOpts = append(extraOpts, skillSDKOpts(m.skills, t.Skills)...)
+			appendSkillPrompts(&opts, m.skills, t.Skills)
 		}
 	}
 	if isProof {
-		extraOpts = append(extraOpts, claudecode.WithModel("sonnet"))
+		opts.Model = "sonnet"
 	}
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "bypassPermissions", m.processCancels, m.toolBridge, m.processTimeout(), extraOpts...)
+		inputCh := make(chan string, 1)
+		m.processInputs.Register(procID, inputCh)
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, m.processCancels, m.processTimeout(), opts, inputCh)
 	} else {
 		return m, flashCmd("Streaming not available (no program ref)")
 	}
@@ -1978,23 +1988,23 @@ func (m Model) agentByName(name string) *agent.Agent {
 	return nil
 }
 
-func agentSDKOpts(a *agent.Agent) []claudecode.Option {
+func buildCLIOptsFromAgent(a *agent.Agent) claude.CLIOptions {
+	var opts claude.CLIOptions
 	if a == nil {
-		return nil
+		return opts
 	}
-	var opts []claudecode.Option
 	if a.SystemPrompt != "" {
-		opts = append(opts, claudecode.WithAppendSystemPrompt(a.SystemPrompt))
+		opts.AppendSystemPrompt = a.SystemPrompt
 	}
 	if a.Model != "" && a.Model != "inherit" {
-		opts = append(opts, claudecode.WithModel(a.Model))
+		opts.Model = a.Model
 	}
 	return opts
 }
 
-func skillSDKOpts(skills []skill.Skill, taskSkillNames []string) []claudecode.Option {
+func appendSkillPrompts(opts *claude.CLIOptions, skills []skill.Skill, taskSkillNames []string) {
 	if len(taskSkillNames) == 0 {
-		return nil
+		return
 	}
 	byName := make(map[string]*skill.Skill, len(skills))
 	for i := range skills {
@@ -2007,10 +2017,14 @@ func skillSDKOpts(skills []skill.Skill, taskSkillNames []string) []claudecode.Op
 		}
 	}
 	if len(prompts) == 0 {
-		return nil
+		return
 	}
 	combined := strings.Join(prompts, "\n\n---\n\n")
-	return []claudecode.Option{claudecode.WithAppendSystemPrompt(combined)}
+	if opts.AppendSystemPrompt != "" {
+		opts.AppendSystemPrompt += "\n\n---\n\n" + combined
+	} else {
+		opts.AppendSystemPrompt = combined
+	}
 }
 
 func (m Model) skillByName(name string) *skill.Skill {
@@ -2228,7 +2242,7 @@ func (m Model) spawnGroupAction(scopeGroupID string, instruction string) (tea.Mo
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout())
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, m.processCancels, m.processTimeout(), claude.CLIOptions{PermissionMode: "plan"}, nil)
 	} else {
 		projectRoot := m.projectRoot
 		cmd = func() tea.Msg {
@@ -2359,14 +2373,17 @@ func (m Model) spawnPlanGeneration(task *model.Task, a *agent.Agent) (tea.Model,
 	workDir := store.ResolveWorkDir(m.projectRoot, m.store, task)
 	promptText := prompt.BuildPlanGenerationPrompt(m.projectRoot, task)
 
-	extraOpts := agentSDKOpts(a)
+	opts := buildCLIOptsFromAgent(a)
+	opts.PermissionMode = "plan"
 	if task != nil && len(task.Skills) > 0 {
-		extraOpts = append(extraOpts, skillSDKOpts(m.skills, task.Skills)...)
+		appendSkillPrompts(&opts, m.skills, task.Skills)
 	}
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout(), extraOpts...)
+		inputCh := make(chan string, 1)
+		m.processInputs.Register(procID, inputCh)
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, m.processCancels, m.processTimeout(), opts, inputCh)
 	} else {
 		projectRoot := m.projectRoot
 		taskID := task.ID
@@ -2411,7 +2428,11 @@ func (m Model) spawnGroupPlanGeneration(group *model.Group, a *agent.Agent) (tea
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout(), agentSDKOpts(a)...)
+		opts := buildCLIOptsFromAgent(a)
+		opts.PermissionMode = "plan"
+		inputCh := make(chan string, 1)
+		m.processInputs.Register(procID, inputCh)
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, m.processCancels, m.processTimeout(), opts, inputCh)
 	} else {
 		projectRoot := m.projectRoot
 		groupID := group.ID
@@ -2468,7 +2489,7 @@ func (m Model) executeCombinePlans(taskIDs []string, name string) (tea.Model, te
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, "plan", m.processCancels, nil, m.processTimeout())
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, m.processCancels, m.processTimeout(), claude.CLIOptions{PermissionMode: "plan"}, nil)
 	} else {
 		projectRoot := m.projectRoot
 		planName := name
@@ -2523,7 +2544,9 @@ func (m Model) executeFollowUp(taskID, question string) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout())
+		inputCh := make(chan string, 1)
+		m.processInputs.Register(procID, inputCh)
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, m.processCancels, m.processTimeout(), claude.CLIOptions{PermissionMode: "plan"}, inputCh)
 	} else {
 		projectRoot := m.projectRoot
 		hasPlanFile := task.PlanFile != ""
@@ -2569,51 +2592,48 @@ func (m Model) handleStreamEvent(msg claude.StreamEventMsg) (tea.Model, tea.Cmd)
 	return m, nil
 }
 
-func (m Model) handleToolQuestion(msg claude.UserQuestionMsg) (tea.Model, tea.Cmd) {
-	// Append a tool question event to the process
+func (m Model) handleStreamWaiting(msg claude.StreamWaitingMsg) (tea.Model, tea.Cmd) {
 	for i := range m.processes {
-		if m.processes[i].ID == msg.ProcessID {
-			m.processes[i].Events = append(m.processes[i].Events, model.StreamEvent{
-				Kind: model.EventToolQuestion,
-				Text: msg.Question,
-			})
-			break
+		if m.processes[i].ID != msg.ProcessID {
+			continue
 		}
-	}
-
-	m.toolQuestionProcID = msg.ProcessID
-	m.toolQuestionText = msg.Question
-
-	// Find the process index so we can show it
-	for i := range m.processes {
-		if m.processes[i].ID == msg.ProcessID {
-			m.processIdx = i
-			break
+		proc := &m.processes[i]
+		if msg.SessionID != "" {
+			proc.SessionID = msg.SessionID
 		}
-	}
+		proc.TurnCount = msg.TurnCount
+		proc.CostUSD = msg.CostUSD
 
-	// Init chat input with question as placeholder
-	sessionID := ""
-	for _, proc := range m.processes {
-		if proc.ID == msg.ProcessID {
-			sessionID = proc.SessionID
-			break
+		// Run completion action on first turn (e.g., save plan)
+		if proc.CompletionAction != model.CompletionNone {
+			m.runCompletionAction(proc, msg.FinalText)
+			proc.CompletionAction = model.CompletionNone
 		}
-	}
-	m.chatInput = NewChatInput(msg.ProcessID, sessionID)
-	m.chatInput.inner.Placeholder = msg.Question
 
-	m.mode = model.ModeProcessChat
-	m.viewport.GotoBottom()
+		// If there's a queued message, auto-send it via the live channel
+		if proc.QueuedMessage != "" {
+			queuedMsg := proc.QueuedMessage
+			proc.QueuedMessage = ""
+			proc.Status = model.ProcessRunning
+			if m.processInputs.Send(proc.ID, queuedMsg) {
+				break
+			}
+		}
+
+		proc.Status = model.ProcessWaiting
+		proc.Events = append(proc.Events, model.StreamEvent{
+			Kind: model.EventSystem,
+			Text: "Waiting for your input — press c to respond",
+		})
+		break
+	}
+	m.reload()
 	return m, nil
 }
 
 func (m Model) handleStreamDone(msg claude.StreamDoneMsg) (tea.Model, tea.Cmd) {
-	// Clear tool question state if this process had a pending question
-	if m.toolQuestionProcID == msg.ProcessID {
-		m.toolQuestionProcID = ""
-		m.toolQuestionText = ""
-	}
+	// Clean up input channel (already closed by goroutine exit)
+	m.processInputs.Remove(msg.ProcessID)
 
 	for i := range m.processes {
 		if m.processes[i].ID != msg.ProcessID {
@@ -2633,7 +2653,7 @@ func (m Model) handleStreamDone(msg claude.StreamDoneMsg) (tea.Model, tea.Cmd) {
 				proc.Status = model.ProcessWaiting
 				proc.Events = append(proc.Events, model.StreamEvent{
 					Kind: model.EventSystem,
-					Text: "⏸ Interrupted — press c to resume with guidance",
+					Text: "Interrupted — press c to resume with guidance",
 				})
 				break
 			}
@@ -2655,8 +2675,11 @@ func (m Model) handleStreamDone(msg claude.StreamDoneMsg) (tea.Model, tea.Cmd) {
 			break
 		}
 
-		// Run completion action
-		m.runCompletionAction(proc, msg.FinalText)
+		// Run completion action (for non-keep-alive processes;
+		// keep-alive processes handle this in handleStreamWaiting)
+		if proc.CompletionAction != model.CompletionNone {
+			m.runCompletionAction(proc, msg.FinalText)
+		}
 
 		// If there's a queued message, auto-send it as a follow-up
 		if proc.QueuedMessage != "" && msg.SessionID != "" {
@@ -2668,7 +2691,7 @@ func (m Model) handleStreamDone(msg claude.StreamDoneMsg) (tea.Model, tea.Cmd) {
 			})
 			proc.Status = model.ProcessRunning
 			m.reload()
-			return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, proc.ID, msg.SessionID, queuedMsg, m.processCancels, m.toolBridge, m.processTimeout())
+			return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, proc.ID, msg.SessionID, queuedMsg, m.processCancels, m.processTimeout())
 		}
 
 		// Set status: interactive processes wait for follow-up, others are done
@@ -2788,34 +2811,13 @@ func (m *Model) runCompletionAction(proc *model.ClaudeProcess, finalText string)
 }
 
 func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
-	// If this is answering a tool question, send the answer through the bridge
-	if m.toolQuestionProcID == msg.ProcessID {
-		// Append user answer event
-		for i := range m.processes {
-			if m.processes[i].ID == msg.ProcessID {
-				m.processes[i].Events = append(m.processes[i].Events, model.StreamEvent{
-					Kind: model.EventUserMsg,
-					Text: msg.Message,
-				})
-				break
-			}
-		}
-		m.toolBridge.SendAnswer(msg.Message)
-		m.toolQuestionProcID = ""
-		m.toolQuestionText = ""
-		m.processAutoScroll = true
-		m.mode = model.ModeProcessDetail
-		m.viewport.GotoBottom()
-		return m, nil
-	}
-
 	// If process is still running, queue the message for when the turn completes
 	for i := range m.processes {
 		if m.processes[i].ID == msg.ProcessID && m.processes[i].Status == model.ProcessRunning {
 			m.processes[i].QueuedMessage = msg.Message
 			m.processes[i].Events = append(m.processes[i].Events, model.StreamEvent{
 				Kind: model.EventSystem,
-				Text: "📨 Message queued: " + msg.Message,
+				Text: "Message queued: " + msg.Message,
 			})
 			m.processAutoScroll = true
 			m.mode = model.ModeProcessDetail
@@ -2824,7 +2826,22 @@ func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Normal follow-up: append user message event and resume session
+	// Try keep-alive path: send via live input channel
+	if m.processInputs.Has(msg.ProcessID) {
+		for i := range m.processes {
+			if m.processes[i].ID == msg.ProcessID {
+				m.processes[i].Status = model.ProcessRunning
+				break
+			}
+		}
+		m.processInputs.Send(msg.ProcessID, msg.Message)
+		m.processAutoScroll = true
+		m.mode = model.ModeProcessDetail
+		m.viewport.GotoBottom()
+		return m, nil
+	}
+
+	// Fallback: resume via new subprocess (process was interrupted/cancelled)
 	for i := range m.processes {
 		if m.processes[i].ID == msg.ProcessID {
 			m.processes[i].Events = append(m.processes[i].Events, model.StreamEvent{
@@ -2840,7 +2857,7 @@ func (m Model) handleChatSubmit(msg claude.ChatSubmitMsg) (tea.Model, tea.Cmd) {
 	m.mode = model.ModeProcessDetail
 	m.viewport.GotoBottom()
 
-	return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, msg.ProcessID, msg.SessionID, msg.Message, m.processCancels, m.toolBridge, m.processTimeout())
+	return m, claude.SpawnStreamResumeCmd(m.program, m.projectRoot, msg.ProcessID, msg.SessionID, msg.Message, m.processCancels, m.processTimeout())
 }
 
 func (m Model) handleProcessDone(msg claude.ProcessDoneMsg) (tea.Model, tea.Cmd) {

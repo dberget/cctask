@@ -1,1 +1,6 @@
-{"tasks":[{"id":"t1","title":"Test task","description":"A test","status":"pending","tags":[],"group":"test-proj","planFile":"t1-test-task.md","created":"2025-01-01T00:00:00Z","updated":"2025-01-01T00:00:00Z"}],"groups":[{"id":"test-proj","name":"Test Project","description":"Testing","parentGroup":"","planFile":"test-proj.md","created":"2025-01-01T00:00:00Z"}],"combinedPlans":[],"nextId":2}
+{
+  "tasks": [],
+  "groups": [],
+  "combinedPlans": [],
+  "nextId": 3
+}
