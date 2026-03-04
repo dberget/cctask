@@ -49,6 +49,9 @@ type EditorSaveMsg struct{ Content string }
 // EditorCancelMsg is sent when the editor is cancelled.
 type EditorCancelMsg struct{}
 
+// storeCheckTickMsg triggers a check for external changes to tasks.json.
+type storeCheckTickMsg struct{}
+
 func flashCmd(text string) tea.Cmd {
 	return func() tea.Msg { return FlashMsg{Text: text} }
 }
@@ -56,5 +59,11 @@ func flashCmd(text string) tea.Cmd {
 func clearFlashCmd() tea.Cmd {
 	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
 		return FlashClearMsg{}
+	})
+}
+
+func storeCheckTickCmd() tea.Cmd {
+	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
+		return storeCheckTickMsg{}
 	})
 }

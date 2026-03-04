@@ -28,6 +28,7 @@ import (
 	"github.com/davidberget/cctask-go/internal/claude"
 	"github.com/davidberget/cctask-go/internal/model"
 	"github.com/davidberget/cctask-go/internal/prompt"
+	"github.com/davidberget/cctask-go/internal/server"
 	"github.com/davidberget/cctask-go/internal/skill"
 	"github.com/davidberget/cctask-go/internal/store"
 )
@@ -153,6 +154,10 @@ type Model struct {
 
 	// Skills loaded from .claude/skills/
 	skills []skill.Skill
+
+	// Web server for webhook integrations
+	server        *server.Server
+	storeMtime    time.Time // last known mtime of tasks.json
 }
 
 func NewModel(projectRoot string) Model {
@@ -216,6 +221,24 @@ func NewModel(projectRoot string) Model {
 	m.commandBar = NewCommandBar()
 	m.commandBar.registry = reg
 	m.commandBar.history = LoadHistory(projectRoot)
+
+	// Start server if enabled
+	if cfg.Server.Enabled {
+		srv := server.New(projectRoot, cfg.Server)
+		if err := srv.LoadPlugins(); err != nil {
+			// Non-fatal: log and continue
+			_ = err
+		}
+		if err := srv.StartBackground(); err != nil {
+			_ = err
+		} else {
+			m.server = srv
+		}
+	}
+
+	// Track tasks.json mtime for external change detection
+	m.storeMtime = storeFileMtime(projectRoot)
+
 	m.rebuildList()
 	return m
 }
@@ -257,12 +280,25 @@ func Run(projectRoot string) {
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(
+	cmds := []tea.Cmd{
 		m.spinner.Tick,
 		func() tea.Msg {
 			return programReadyMsg{p: programRef}
 		},
-	)
+	}
+	if m.server != nil {
+		cmds = append(cmds, storeCheckTickCmd())
+	}
+	return tea.Batch(cmds...)
+}
+
+// storeFileMtime returns the modification time of tasks.json.
+func storeFileMtime(projectRoot string) time.Time {
+	info, err := os.Stat(store.TasksPath(projectRoot))
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -316,6 +352,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	case storeCheckTickMsg:
+		mtime := storeFileMtime(m.projectRoot)
+		if !mtime.IsZero() && mtime.After(m.storeMtime) {
+			m.storeMtime = mtime
+			m.reload()
+		}
+		return m, storeCheckTickCmd()
 
 	case FlashMsg:
 		m.message = msg.Text
@@ -542,7 +586,7 @@ func (m Model) View() string {
 			statusRendered = lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(barView)
 		}
 	} else {
-		statusBar := renderStatusBar(m.helpModel, m.keys, m.mode, m.selectedItem, m.message, m.width)
+		statusBar := renderStatusBar(m.helpModel, m.keys, m.mode, m.selectedItem, m.message, m.width, m.server != nil && m.server.Running())
 		statusRendered = lipgloss.NewStyle().PaddingLeft(2).PaddingBottom(1).Render(statusBar)
 	}
 
@@ -1024,6 +1068,9 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if k == "ctrl+c" || (key.Matches(msg, m.keys.Quit) && m.mode == model.ModeList) {
 		m.processCancels.CancelAll()
+		if m.server != nil {
+			m.server.Stop(context.Background())
+		}
 		return m, tea.Quit
 	}
 

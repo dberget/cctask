@@ -1,0 +1,90 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+)
+
+// PluginRoute describes an HTTP route this plugin handles.
+type PluginRoute struct {
+	Method string `json:"method"`
+	Path   string `json:"path"`
+}
+
+// PluginInfo is metadata returned by the "info" command.
+type PluginInfo struct {
+	Name        string        `json:"name"`
+	Description string        `json:"description"`
+	Routes      []PluginRoute `json:"routes"`
+}
+
+// PluginRequest is the JSON received on stdin for the "handle" command.
+type PluginRequest struct {
+	Body    string            `json:"body"`
+	Headers map[string]string `json:"headers"`
+}
+
+// PluginTask is a task to create.
+type PluginTask struct {
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Tags        []string `json:"tags"`
+	Group       string   `json:"group"`
+}
+
+// PluginResponse is the JSON written to stdout.
+type PluginResponse struct {
+	Tasks []PluginTask `json:"tasks"`
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: plugin <info|handle> [--route PATH]")
+		os.Exit(1)
+	}
+
+	switch os.Args[1] {
+	case "info":
+		info := PluginInfo{
+			Name:        "{{.Name}}",
+			Description: "{{.Description}}",
+			Routes: []PluginRoute{
+				{Method: "POST", Path: "/webhooks/{{.Name}}"},
+			},
+		}
+		json.NewEncoder(os.Stdout).Encode(info)
+
+	case "handle":
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		var req PluginRequest
+		if err := json.Unmarshal(data, &req); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+
+		tasks := transform(req)
+		json.NewEncoder(os.Stdout).Encode(PluginResponse{Tasks: tasks})
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
+		os.Exit(1)
+	}
+}
+
+// transform converts the incoming webhook payload into tasks.
+// Customize this function for your integration.
+func transform(req PluginRequest) []PluginTask {
+	// TODO: Parse req.Body and req.Headers to create tasks.
+	// Example:
+	//   var payload MyWebhookPayload
+	//   json.Unmarshal([]byte(req.Body), &payload)
+	//   return []PluginTask{{Title: payload.Title, Tags: []string{"webhook"}}}
+	return nil
+}

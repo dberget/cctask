@@ -12,7 +12,7 @@ func keyHint(k, label string) string {
 	return styleCyanBold.Render(k) + " " + styleDim.Render(label)
 }
 
-func renderStatusBar(h help.Model, keys KeyBindings, mode model.ViewMode, selected *model.ListItem, message string, cols int) string {
+func renderStatusBar(h help.Model, keys KeyBindings, mode model.ViewMode, selected *model.ListItem, message string, cols int, serverRunning bool) string {
 	lineWidth := cols - 4
 	if lineWidth < 40 {
 		lineWidth = 40
@@ -29,6 +29,9 @@ func renderStatusBar(h help.Model, keys KeyBindings, mode model.ViewMode, select
 	hintLine := strings.Join(hints, "  ")
 	if message != "" {
 		hintLine += "  " + styleYellow.Render(message)
+	}
+	if serverRunning {
+		hintLine += "  " + styleGreen.Render("●")
 	}
 
 	return horizontalLine(lineWidth) + "\n" + hintLine
