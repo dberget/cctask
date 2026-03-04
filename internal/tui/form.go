@@ -134,11 +134,6 @@ func (m FormModel) Data() TaskFormData {
 // signaling app.go to open the MultiCheck skill picker.
 type FormSkillPickerMsg struct{}
 
-// SetSkills updates the selected skills on the form.
-func (m *FormModel) SetSkills(skills []string) {
-	m.skills = skills
-}
-
 func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
 	// Global keys
 	switch {
@@ -183,6 +178,8 @@ func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
 		m.tags, cmd = m.tags.Update(msg)
 	case fieldWorkDir:
 		m.workDir, cmd = m.workDir.Update(msg)
+	case fieldSkills:
+		// Skills field is not editable; input handled via Enter -> picker.
 	}
 	return m, cmd
 }
@@ -201,6 +198,8 @@ func (m *FormModel) focusActive() {
 		m.tags.Focus()
 	case fieldWorkDir:
 		m.workDir.Focus()
+	case fieldSkills:
+		// Skills field is display-only; no input widget to focus.
 	}
 }
 

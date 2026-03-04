@@ -410,7 +410,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case MultiCheckSubmitMsg:
 		if m.mode == model.ModeSkillPicker {
-			m.form.SetSkills(msg.Selected)
+			m.form.skills = msg.Selected
 			m.mode = model.ModeTaskForm
 			return m, nil
 		}
