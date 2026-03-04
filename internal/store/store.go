@@ -122,6 +122,26 @@ func SaveStore(projectRoot string, s *model.TaskStore) error {
 	return writeStore(TasksPath(projectRoot), s)
 }
 
+// LockedModifyStore acquires a file lock, loads the store, calls the modify
+// function, and saves the result. This prevents concurrent write corruption
+// when the server and TUI both write to tasks.json.
+func LockedModifyStore(projectRoot string, fn func(s *model.TaskStore) error) error {
+	lf, err := lockFile(projectRoot)
+	if err != nil {
+		return fmt.Errorf("acquire lock: %w", err)
+	}
+	defer unlockFile(lf)
+
+	s, err := LoadStore(projectRoot)
+	if err != nil {
+		return err
+	}
+	if err := fn(s); err != nil {
+		return err
+	}
+	return writeStore(TasksPath(projectRoot), s)
+}
+
 func emptyStore() *model.TaskStore {
 	return &model.TaskStore{
 		Tasks:         []model.Task{},

@@ -93,12 +93,19 @@ type TaskStore struct {
 	NextID        int            `json:"nextId"`
 }
 
+type ServerConfig struct {
+	Port      int    `json:"port,omitempty"`
+	AuthToken string `json:"authToken,omitempty"`
+	Enabled   bool   `json:"enabled,omitempty"`
+}
+
 type Config struct {
-	Model          string `json:"model,omitempty"`
-	Budget         int    `json:"budget,omitempty"`
-	Theme          string `json:"theme,omitempty"`
-	TimeoutMinutes     int    `json:"timeoutMinutes,omitempty"`
-	DisableSkillPicker bool   `json:"disableSkillPicker,omitempty"`
+	Model              string       `json:"model,omitempty"`
+	Budget             int          `json:"budget,omitempty"`
+	Theme              string       `json:"theme,omitempty"`
+	TimeoutMinutes     int          `json:"timeoutMinutes,omitempty"`
+	DisableSkillPicker bool         `json:"disableSkillPicker,omitempty"`
+	Server             ServerConfig `json:"server,omitempty"`
 }
 
 const DefaultTimeoutMinutes = 60
