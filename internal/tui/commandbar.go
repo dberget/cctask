@@ -69,9 +69,21 @@ func (cb CommandBarModel) Update(msg tea.KeyMsg) (CommandBarModel, tea.Cmd) {
 
 	case msg.Type == tea.KeyEnter:
 		if cb.showSuggestions && len(cb.suggestions) > 0 {
-			// Accept the current suggestion
+			// Accept the current suggestion, replacing only the last token
 			accepted := cb.suggestions[cb.suggestionIdx]
-			cb.buffer = []rune(accepted + " ")
+			input := string(cb.buffer)
+			parts := strings.Fields(input)
+			if len(parts) <= 1 && !strings.HasSuffix(input, " ") {
+				// Replacing the command name itself
+				cb.buffer = []rune(accepted + " ")
+			} else if strings.HasSuffix(input, " ") {
+				// Appending a new argument
+				cb.buffer = []rune(input + accepted + " ")
+			} else {
+				// Replacing the last partial token
+				parts[len(parts)-1] = accepted
+				cb.buffer = []rune(strings.Join(parts, " ") + " ")
+			}
 			cb.cursor = len(cb.buffer)
 			cb.showSuggestions = false
 			cb.suggestions = nil
