@@ -91,6 +91,9 @@ func renderTaskDetail(task *model.Task, projectRoot string, width int) string {
 	if len(task.Tags) > 0 {
 		lines = append(lines, styleGray.Render(padRight("Tags:", 10))+styleMagenta.Render(strings.Join(task.Tags, ", ")))
 	}
+	if len(task.Skills) > 0 {
+		lines = append(lines, styleGray.Render(padRight("Skills:", 10))+styleCyan.Render(strings.Join(task.Skills, ", ")))
+	}
 	if task.Group != "" {
 		lines = append(lines, styleGray.Render(padRight("Project:", 10))+task.Group)
 	}
