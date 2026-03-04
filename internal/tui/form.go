@@ -14,6 +14,7 @@ type TaskFormData struct {
 	Description string
 	Tags        string
 	WorkDir     string
+	Skills      []string
 }
 
 type formField int
@@ -23,6 +24,7 @@ const (
 	fieldDescription
 	fieldTags
 	fieldWorkDir
+	fieldSkills
 	fieldCount
 )
 
@@ -35,9 +37,13 @@ type FormModel struct {
 	desc    textarea.Model
 	tags    textinput.Model
 	workDir textinput.Model
+
+	// Skills picker
+	skills          []string // selected skill names
+	availableSkills []string // all available skill names for display
 }
 
-func NewForm(heading string, initial *TaskFormData, width int) FormModel {
+func NewForm(heading string, initial *TaskFormData, width int, availableSkills []string) FormModel {
 	// Title field
 	ti := textinput.New()
 	ti.Prompt = ""
@@ -82,12 +88,13 @@ func NewForm(heading string, initial *TaskFormData, width int) FormModel {
 	wd.Blur()
 
 	m := FormModel{
-		Heading: heading,
-		Width:   width,
-		title:   ti,
-		desc:    ta,
-		tags:    tg,
-		workDir: wd,
+		Heading:         heading,
+		Width:           width,
+		title:           ti,
+		desc:            ta,
+		tags:            tg,
+		workDir:         wd,
+		availableSkills: availableSkills,
 	}
 
 	if initial != nil {
@@ -95,6 +102,9 @@ func NewForm(heading string, initial *TaskFormData, width int) FormModel {
 		m.desc.SetValue(initial.Description)
 		m.tags.SetValue(initial.Tags)
 		m.workDir.SetValue(initial.WorkDir)
+		if initial.Skills != nil {
+			m.skills = initial.Skills
+		}
 	}
 
 	// Set widths
@@ -116,7 +126,17 @@ func (m FormModel) Data() TaskFormData {
 		Description: m.desc.Value(),
 		Tags:        m.tags.Value(),
 		WorkDir:     m.workDir.Value(),
+		Skills:      m.skills,
 	}
+}
+
+// FormSkillPickerMsg is sent when the user presses Enter on the Skills field,
+// signaling app.go to open the MultiCheck skill picker.
+type FormSkillPickerMsg struct{}
+
+// SetSkills updates the selected skills on the form.
+func (m *FormModel) SetSkills(skills []string) {
+	m.skills = skills
 }
 
 func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
@@ -140,17 +160,15 @@ func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
 		return m, nil
 	}
 
-	// Enter on single-line fields advances to next field / submits
+	// Enter on single-line fields advances to next field / opens skill picker
 	if msg.Type == tea.KeyEnter && m.Active != fieldDescription {
-		if m.Active == fieldWorkDir {
-			if strings.TrimSpace(m.title.Value()) != "" {
-				data := m.Data()
-				return m, func() tea.Msg { return FormSubmitMsg{Data: data} }
-			}
-		} else {
-			m.Active = formField(int(m.Active) + 1)
-			m.focusActive()
+		if m.Active == fieldSkills {
+			// Open the skill picker overlay
+			return m, func() tea.Msg { return FormSkillPickerMsg{} }
 		}
+		// All other single-line fields advance to next
+		m.Active = formField(int(m.Active) + 1)
+		m.focusActive()
 		return m, nil
 	}
 
@@ -192,7 +210,7 @@ func (m FormModel) View() string {
 	lines = append(lines, styleGray.Render("Tab: next field  Enter: next/newline  Ctrl+S: save  Ctrl+B: browse dir  Esc: cancel"))
 	lines = append(lines, "")
 
-	labels := [fieldCount]string{"Title", "Description", "Tags", "WorkDir"}
+	labels := [fieldCount]string{"Title", "Description", "Tags", "WorkDir", "Skills"}
 
 	for i := formField(0); i < fieldCount; i++ {
 		isActive := i == m.Active
@@ -225,6 +243,12 @@ func (m FormModel) View() string {
 			lines = append(lines, labelPadded+m.tags.View())
 		case fieldWorkDir:
 			lines = append(lines, labelPadded+m.workDir.View())
+		case fieldSkills:
+			skillsDisplay := "(none - press Enter to select)"
+			if len(m.skills) > 0 {
+				skillsDisplay = strings.Join(m.skills, ", ")
+			}
+			lines = append(lines, labelPadded+lipgloss.NewStyle().Foreground(colorWhite).Render(skillsDisplay))
 		}
 		lines = append(lines, "")
 	}

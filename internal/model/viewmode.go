@@ -33,6 +33,7 @@ const (
 	ModeFilePicker
 	ModeFormDirPicker
 	ModeBulkAdd
+	ModeSkillPicker
 )
 
 func (m ViewMode) String() string {
@@ -97,6 +98,8 @@ func (m ViewMode) String() string {
 		return "form-dir-picker"
 	case ModeBulkAdd:
 		return "bulk-add"
+	case ModeSkillPicker:
+		return "skill-picker"
 	default:
 		return "unknown"
 	}

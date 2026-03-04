@@ -28,6 +28,7 @@ import (
 	"github.com/davidberget/cctask-go/internal/claude"
 	"github.com/davidberget/cctask-go/internal/model"
 	"github.com/davidberget/cctask-go/internal/prompt"
+	"github.com/davidberget/cctask-go/internal/skill"
 	"github.com/davidberget/cctask-go/internal/store"
 	claudecode "github.com/severity1/claude-agent-sdk-go"
 )
@@ -155,6 +156,9 @@ type Model struct {
 
 	// Agents loaded from .claude/agents/
 	agents []agent.Agent
+
+	// Skills loaded from .claude/skills/
+	skills []skill.Skill
 }
 
 func NewModel(projectRoot string) Model {
@@ -198,6 +202,7 @@ func NewModel(projectRoot string) Model {
 		width:           80,
 		height:          24,
 		agents:          agent.LoadAgents(projectRoot),
+		skills:          skill.LoadSkills(projectRoot),
 		keys:               NewKeyBindings(),
 		helpModel:          newHelpModel(),
 		groupProgress:      prog,
@@ -213,6 +218,20 @@ func NewModel(projectRoot string) Model {
 func (m Model) processTimeout() time.Duration {
 	cfg := store.LoadConfig(m.projectRoot)
 	return cfg.Timeout()
+}
+
+// skillNames returns the names of available skills for the form picker,
+// or nil if the skill picker is disabled via config.
+func (m Model) skillNames() []string {
+	cfg := store.LoadConfig(m.projectRoot)
+	if cfg.DisableSkillPicker {
+		return nil
+	}
+	names := make([]string, len(m.skills))
+	for i, s := range m.skills {
+		names[i] = s.Name
+	}
+	return names
 }
 
 var programRef *tea.Program
@@ -358,6 +377,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mode = model.ModeList
 		m.action = actionNone
 		return m, nil
+	case FormSkillPickerMsg:
+		if len(m.skills) == 0 {
+			return m, flashCmd("No skills available")
+		}
+		items := make([]CheckItem, len(m.skills))
+		for i, s := range m.skills {
+			label := s.Name
+			if s.Description != "" {
+				label += "  " + s.Description
+			}
+			items[i] = CheckItem{Label: label, Value: s.Name}
+		}
+		m.multiCheck = NewMultiCheck("Select skills", items)
+		// Pre-select already chosen skills
+		for _, name := range m.form.skills {
+			m.multiCheck.Selected[name] = true
+		}
+		m.returnMode = m.mode
+		m.mode = model.ModeSkillPicker
+		return m, nil
 	case SelectSubmitMsg:
 		return m.handleSelectSubmit(msg.Value)
 	case SelectCancelMsg:
@@ -370,8 +409,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.action = actionNone
 		return m, nil
 	case MultiCheckSubmitMsg:
+		if m.mode == model.ModeSkillPicker {
+			m.form.SetSkills(msg.Selected)
+			m.mode = model.ModeTaskForm
+			return m, nil
+		}
 		return m.handleMultiCheckSubmit(msg.Selected)
 	case MultiCheckCancelMsg:
+		if m.mode == model.ModeSkillPicker {
+			m.mode = model.ModeTaskForm
+			return m, nil
+		}
 		m.mode = model.ModeList
 		m.action = actionNone
 		return m, nil
@@ -591,7 +639,7 @@ func (m Model) renderContent(contentHeight int) string {
 	case model.ModeAddToGroup, model.ModeThemePicker, model.ModeAgentPicker:
 		return m.selectInput.View()
 
-	case model.ModeCombineSelect:
+	case model.ModeCombineSelect, model.ModeSkillPicker:
 		return m.multiCheck.View()
 
 	case model.ModeCombineName:
@@ -758,7 +806,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 
-	case model.ModeCombineSelect:
+	case model.ModeCombineSelect, model.ModeSkillPicker:
 		var cmd tea.Cmd
 		m.multiCheck, cmd = m.multiCheck.Update(msg)
 		return m, cmd
@@ -1115,7 +1163,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if key.Matches(msg, m.keys.Add) && m.mode == model.ModeList {
 		m.action = actionAddTask
-		m.form = NewForm("New Task", nil, m.width)
+		m.form = NewForm("New Task", nil, m.width, m.skillNames())
 		m.mode = model.ModeTaskForm
 		return m, nil
 	}
@@ -1365,7 +1413,10 @@ func (m Model) handleFormSubmit(data TaskFormData) (tea.Model, tea.Cmd) {
 
 	switch m.action {
 	case actionAddTask:
-		store.AddTask(m.projectRoot, data.Title, data.Description, tags, "", data.WorkDir)
+		t, _ := store.AddTask(m.projectRoot, data.Title, data.Description, tags, "", data.WorkDir)
+		if t != nil && len(data.Skills) > 0 {
+			store.UpdateTask(m.projectRoot, t.ID, map[string]interface{}{"skills": data.Skills})
+		}
 		m.reload()
 		m.mode = model.ModeList
 		m.action = actionNone
@@ -1377,6 +1428,7 @@ func (m Model) handleFormSubmit(data TaskFormData) (tea.Model, tea.Cmd) {
 			"description": data.Description,
 			"tags":        tags,
 			"workDir":     data.WorkDir,
+			"skills":      data.Skills,
 		})
 		m.reload()
 		m.mode = model.ModeList
@@ -1623,8 +1675,9 @@ func (m Model) handleEdit() (tea.Model, tea.Cmd) {
 				Description: t.Description,
 				Tags:        strings.Join(t.Tags, ", "),
 				WorkDir:     t.WorkDir,
+				Skills:      t.Skills,
 			}
-			m.form = NewForm(fmt.Sprintf("Edit Task — %s", t.ID), initial, m.width)
+			m.form = NewForm(fmt.Sprintf("Edit Task — %s", t.ID), initial, m.width, m.skillNames())
 			m.mode = model.ModeTaskForm
 		}
 		return m, nil
