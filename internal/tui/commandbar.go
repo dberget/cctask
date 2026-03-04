@@ -287,26 +287,8 @@ func (cb CommandBarModel) SuggestionsView(width int) string {
 		return ""
 	}
 
-	// Show a window of up to 5 suggestions around the selected index
-	maxVisible := 5
-	total := len(cb.suggestions)
-	start := 0
-	end := total
-	if total > maxVisible {
-		start = cb.suggestionIdx - maxVisible/2
-		if start < 0 {
-			start = 0
-		}
-		end = start + maxVisible
-		if end > total {
-			end = total
-			start = end - maxVisible
-		}
-	}
-
 	var lines []string
-	for i := start; i < end; i++ {
-		s := cb.suggestions[i]
+	for i, s := range cb.suggestions {
 		if i == cb.suggestionIdx {
 			lines = append(lines, styleCyanBold.Render("  "+s))
 		} else {
