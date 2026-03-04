@@ -170,6 +170,8 @@ func modeShortHelp(keys KeyBindings, mode model.ViewMode, selected *model.ListIt
 		return []key.Binding{keys.Run, keys.Edit, keys.Plan, keys.Prompt, keys.CycleStatus, keys.OpenProof, keys.OpenExtEditor, keys.Back}
 	case model.ModeHelp:
 		return []key.Binding{keys.Help, keys.Back}
+	case model.ModePluginList:
+		return []key.Binding{keys.Back}
 	case model.ModeTaskViewAsk, model.ModeGroupPrompt:
 		return []key.Binding{keys.Enter, keys.Back}
 	default:

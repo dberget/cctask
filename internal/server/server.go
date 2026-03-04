@@ -150,6 +150,11 @@ func (s *Server) Port() int {
 	return s.port
 }
 
+// Plugins returns the list of loaded plugins.
+func (s *Server) Plugins() []PluginInfo {
+	return s.plugins
+}
+
 // RegisterPluginRoute adds a route that delegates to a plugin handler.
 func (s *Server) RegisterPluginRoute(method, path string, handler http.HandlerFunc) {
 	pattern := method + " " + path

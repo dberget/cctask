@@ -14,6 +14,18 @@ type ClaudeExitMsg struct {
 	Err error
 }
 
+// SpawnOption configures SpawnInTerminal behavior.
+type SpawnOption func(*spawnConfig)
+
+type spawnConfig struct {
+	dangerouslySkipPermissions bool
+}
+
+// WithDangerouslySkipPermissions adds --dangerously-skip-permissions to the spawned claude session.
+func WithDangerouslySkipPermissions() SpawnOption {
+	return func(c *spawnConfig) { c.dangerouslySkipPermissions = true }
+}
+
 type terminalApp string
 
 const (
@@ -175,7 +187,11 @@ func spawnCLI(binary string, args ...string) {
 // SpawnInTerminal opens a new window in the user's active terminal app with an
 // interactive claude session. Uses a launcher script to avoid shell/AppleScript
 // escaping issues. This does not block the TUI.
-func SpawnInTerminal(projectRoot string, systemPrompt string) tea.Cmd {
+func SpawnInTerminal(projectRoot string, systemPrompt string, opts ...SpawnOption) tea.Cmd {
+	var cfg spawnConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	return func() tea.Msg {
 		// Write prompt to temp file
 		promptFile, err := os.CreateTemp("", "cctask-prompt-*.txt")
@@ -191,8 +207,12 @@ func SpawnInTerminal(projectRoot string, systemPrompt string) tea.Cmd {
 			os.Remove(promptFile.Name())
 			return nil
 		}
-		fmt.Fprintf(launchFile, "#!/bin/bash\ncd %q\nclaude --append-system-prompt \"$(cat %q)\"\nrm -f %q %q\n",
-			projectRoot, promptFile.Name(), promptFile.Name(), launchFile.Name())
+		claudeFlags := `--append-system-prompt "$(cat ` + fmt.Sprintf("%q", promptFile.Name()) + `)"`
+		if cfg.dangerouslySkipPermissions {
+			claudeFlags += " --dangerously-skip-permissions"
+		}
+		fmt.Fprintf(launchFile, "#!/bin/bash\ncd %q\nclaude %s\nrm -f %q %q\n",
+			projectRoot, claudeFlags, promptFile.Name(), launchFile.Name())
 		launchFile.Close()
 		os.Chmod(launchFile.Name(), 0o755)
 

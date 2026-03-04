@@ -19,6 +19,7 @@ type cmdCdMsg struct{ group string }
 type cmdHelpMsg struct{ command string }
 type cmdPluginNewMsg struct{ name string }
 type cmdServerToggleMsg struct{ on bool }
+type cmdPluginsMsg struct{}
 
 // prefixCompleter returns a completer function that filters options by prefix.
 func prefixCompleter(options []string) func(partial string) []string {
@@ -217,26 +218,29 @@ func registerCommands(reg *CommandRegistry, getGroups func() []string) {
 		},
 	})
 
-	// plugin new <name>
+	// plugins [new <name>]
 	reg.Register(Command{
-		Name:        "plugin",
-		Description: "Manage webhook plugins",
+		Name:        "plugins",
+		Description: "Browse or create webhook plugins",
 		Args: []ArgDef{
 			{
 				Name:      "action",
-				Required:  true,
+				Required:  false,
 				Completer: prefixCompleter([]string{"new"}),
 			},
 			{
 				Name:     "name",
-				Required: true,
+				Required: false,
 			},
 		},
 		Execute: func(args []string) tea.Cmd {
-			if len(args) < 2 || args[0] != "new" {
-				return func() tea.Msg { return FlashMsg{Text: "usage: plugin new <name>"} }
+			if len(args) == 0 {
+				return func() tea.Msg { return cmdPluginsMsg{} }
 			}
-			return func() tea.Msg { return cmdPluginNewMsg{name: args[1]} }
+			if args[0] == "new" && len(args) >= 2 {
+				return func() tea.Msg { return cmdPluginNewMsg{name: args[1]} }
+			}
+			return func() tea.Msg { return FlashMsg{Text: "usage: plugins [new <name>]"} }
 		},
 	})
 

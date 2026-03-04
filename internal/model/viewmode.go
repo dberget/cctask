@@ -35,6 +35,7 @@ const (
 	ModeBulkAdd
 	ModeSkillPicker
 	ModeCommandBar
+	ModePluginList
 )
 
 func (m ViewMode) String() string {
@@ -103,6 +104,8 @@ func (m ViewMode) String() string {
 		return "skill-picker"
 	case ModeCommandBar:
 		return "command-bar"
+	case ModePluginList:
+		return "plugin-list"
 	default:
 		return "unknown"
 	}
@@ -111,7 +114,7 @@ func (m ViewMode) String() string {
 // IsNavigable returns true if the mode allows j/k/arrow navigation and action keys
 func (m ViewMode) IsNavigable() bool {
 	switch m {
-	case ModeList, ModeDetail, ModePlan, ModeGroupDetail, ModeProcessDetail, ModeTaskView, ModeContextView:
+	case ModeList, ModeDetail, ModePlan, ModeGroupDetail, ModeProcessDetail, ModeTaskView, ModeContextView, ModePluginList:
 		return true
 	default:
 		return false

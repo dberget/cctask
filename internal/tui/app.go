@@ -552,6 +552,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case cmdHelpMsg:
 		return m.handleCommandHelp(msg.command)
 
+	case cmdPluginsMsg:
+		m.mode = model.ModePluginList
+		m.viewport.GotoTop()
+		return m, nil
+
 	case cmdPluginNewMsg:
 		path, err := server.ScaffoldPlugin(m.projectRoot, msg.name)
 		if err != nil {
@@ -559,8 +564,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, flashCmd("Plugin error: " + err.Error())
 		}
 		m.mode = model.ModeList
-		_ = path
-		return m, flashCmd("Plugin created: " + msg.name)
+		systemPrompt := fmt.Sprintf(
+			"You are setting up a cctask webhook plugin called %q.\n"+
+				"The plugin scaffold has been created at: %s\n\n"+
+				"Your job is to implement the `transform` function in main.go so it correctly "+
+				"parses incoming %s webhook payloads and converts them into tasks.\n\n"+
+				"Look up the %s webhook payload format and implement the transform function. "+
+				"Then compile it with `go build -o bin/plugin .` and verify it works by running `./bin/plugin info`.",
+			msg.name, path, msg.name, msg.name,
+		)
+		return m, tea.Batch(
+			claude.SpawnInTerminal(path, systemPrompt, claude.WithDangerouslySkipPermissions()),
+			flashCmd("Plugin created: "+msg.name+" — opening Claude to set up..."),
+		)
 
 	case cmdServerToggleMsg:
 		if msg.on {
@@ -893,6 +909,10 @@ func (m Model) renderContent(contentHeight int) string {
 		m.viewport.SetContent(renderHelp(m.helpModel, m.keys))
 		return m.viewport.View()
 
+	case model.ModePluginList:
+		m.viewport.SetContent(renderPluginList(m.projectRoot, m.width-8))
+		return m.viewport.View()
+
 	case model.ModeTableView:
 		return renderTableView(m.taskTable)
 
@@ -1084,7 +1104,7 @@ func (m Model) handleListKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) isFullscreenMode() bool {
 	switch m.mode {
-	case model.ModePlan, model.ModeTaskView, model.ModeGroupDetail, model.ModeProcessDetail, model.ModeContextView, model.ModeHelp:
+	case model.ModePlan, model.ModeTaskView, model.ModeGroupDetail, model.ModeProcessDetail, model.ModeContextView, model.ModeHelp, model.ModePluginList:
 		return true
 	}
 	return false
@@ -1112,6 +1132,8 @@ func (m *Model) syncViewportContent() {
 		m.viewport.SetContent(renderContextView(m.projectRoot))
 	case model.ModeHelp:
 		m.viewport.SetContent(renderHelp(m.helpModel, m.keys))
+	case model.ModePluginList:
+		m.viewport.SetContent(renderPluginList(m.projectRoot, m.width-8))
 	}
 }
 

@@ -24,14 +24,14 @@ const (
 	pluginTimeout  = 10 * time.Second
 )
 
-// pluginsPath returns the path to .cctask/plugins/.
-func pluginsPath(projectRoot string) string {
+// PluginsPath returns the path to .cctask/plugins/.
+func PluginsPath(projectRoot string) string {
 	return filepath.Join(store.CctaskDir(projectRoot), pluginDir)
 }
 
 // LoadPlugins discovers, compiles, and registers all plugins.
 func (s *Server) LoadPlugins() error {
-	dir := pluginsPath(s.projectRoot)
+	dir := PluginsPath(s.projectRoot)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
