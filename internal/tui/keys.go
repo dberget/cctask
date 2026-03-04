@@ -56,6 +56,9 @@ type KeyBindings struct {
 	// Editor
 	EditorSave key.Binding
 
+	// External editor
+	OpenExtEditor key.Binding
+
 	// Form
 	FormSave   key.Binding
 	FormNext   key.Binding
@@ -109,6 +112,7 @@ func NewKeyBindings() KeyBindings {
 		OpenProof: key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "open proof")),
 
 		EditorSave: key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("Ctrl+S", "save")),
+		OpenExtEditor: key.NewBinding(key.WithKeys("V"), key.WithHelp("V", "vim")),
 
 		FormSave: key.NewBinding(key.WithKeys("ctrl+s", "ctrl+d"), key.WithHelp("Ctrl+S", "save")),
 		FormNext: key.NewBinding(key.WithKeys("tab"), key.WithHelp("Tab", "next field")),
@@ -147,7 +151,7 @@ func modeShortHelp(keys KeyBindings, mode model.ViewMode, selected *model.ListIt
 	case model.ModeDetail:
 		return []key.Binding{keys.Edit, keys.Run, keys.Plan, keys.CycleStatus, keys.Back}
 	case model.ModePlan:
-		return []key.Binding{keys.Run, keys.Edit, keys.Plan, keys.Back}
+		return []key.Binding{keys.Run, keys.Edit, keys.Plan, keys.OpenExtEditor, keys.Back}
 	case model.ModeGroupDetail:
 		return []key.Binding{keys.Run, keys.Plan, keys.Delete, keys.Back}
 	case model.ModeTaskForm:
@@ -159,11 +163,11 @@ func modeShortHelp(keys KeyBindings, mode model.ViewMode, selected *model.ListIt
 	case model.ModeProcessChat:
 		return []key.Binding{keys.Enter, keys.Back}
 	case model.ModeEditPlan, model.ModeEditContext, model.ModeBulkAdd:
-		return []key.Binding{keys.EditorSave, keys.Back}
+		return []key.Binding{keys.EditorSave, keys.OpenExtEditor, keys.Back}
 	case model.ModeContextView:
-		return []key.Binding{keys.Edit, keys.Back}
+		return []key.Binding{keys.Edit, keys.OpenExtEditor, keys.Back}
 	case model.ModeTaskView:
-		return []key.Binding{keys.Run, keys.Edit, keys.Plan, keys.Prompt, keys.CycleStatus, keys.OpenProof, keys.Back}
+		return []key.Binding{keys.Run, keys.Edit, keys.Plan, keys.Prompt, keys.CycleStatus, keys.OpenProof, keys.OpenExtEditor, keys.Back}
 	case model.ModeHelp:
 		return []key.Binding{keys.Help, keys.Back}
 	case model.ModeTaskViewAsk, model.ModeGroupPrompt:
