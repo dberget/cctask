@@ -313,6 +313,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.reload()
 		return m, nil
 
+	case ExternalEditorExitMsg:
+		return m.handleExternalEditorExit(msg)
+
 	case claude.ProcessOutputMsg:
 		for i := range m.processes {
 			if m.processes[i].ID == msg.ID {
@@ -1202,6 +1205,10 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEdit()
 	}
 
+	if key.Matches(msg, m.keys.OpenExtEditor) {
+		return m.handleOpenExtEditor()
+	}
+
 	if key.Matches(msg, m.keys.Delete) && (m.mode == model.ModeList || m.mode == model.ModeDetail) {
 		return m.handleDelete()
 	}
@@ -1716,6 +1723,106 @@ func (m Model) handleEdit() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) handleOpenExtEditor() (tea.Model, tea.Cmd) {
+	switch m.mode {
+	case model.ModePlan:
+		planFile := ""
+		if t := m.selectedTask(); t != nil {
+			planFile = t.PlanFile
+		} else if g := m.selectedGroup(); g != nil {
+			planFile = g.PlanFile
+		}
+		if planFile == "" {
+			return m, flashCmd("No plan file to edit")
+		}
+		m.returnMode = model.ModePlan
+		m.action = actionEditPlanContent
+		m.actionPlanFile = planFile
+		return m, openPlanInEditor(m.projectRoot, planFile)
+
+	case model.ModeEditPlan:
+		if m.actionPlanFile == "" {
+			return m, flashCmd("No plan file")
+		}
+		store.SavePlan(m.projectRoot, m.actionPlanFile, m.editor.Content())
+		return m, openPlanInEditor(m.projectRoot, m.actionPlanFile)
+
+	case model.ModeContextView:
+		m.returnMode = model.ModeContextView
+		m.action = actionEditContext
+		return m, openContextInEditor(m.projectRoot)
+
+	case model.ModeEditContext:
+		store.SaveContext(m.projectRoot, m.editor.Content())
+		return m, openContextInEditor(m.projectRoot)
+
+	case model.ModeTaskView:
+		if t := m.selectedTask(); t != nil {
+			m.returnMode = model.ModeTaskView
+			m.action = actionEditTask
+			m.actionTaskID = t.ID
+			return m, openContentInEditor(t.Description, "cctask-desc")
+		}
+
+	case model.ModeBulkAdd:
+		m.returnMode = model.ModeList
+		m.action = actionBulkAdd
+		return m, openContentInEditor(m.editor.Content(), "cctask-bulk")
+	}
+
+	return m, nil
+}
+
+func (m Model) handleExternalEditorExit(msg ExternalEditorExitMsg) (tea.Model, tea.Cmd) {
+	if msg.Err != nil {
+		m.mode = m.returnMode
+		m.action = actionNone
+		return m, flashCmd("Editor error: " + msg.Err.Error())
+	}
+
+	switch m.action {
+	case actionEditPlanContent:
+		m.reload()
+		m.mode = m.returnMode
+		m.action = actionNone
+		m.actionPlanFile = ""
+		return m, flashCmd("Plan updated")
+
+	case actionEditContext:
+		m.mode = m.returnMode
+		m.action = actionNone
+		return m, flashCmd("Context updated")
+
+	case actionEditTask:
+		if msg.Content != "" && m.actionTaskID != "" {
+			for i, t := range m.store.Tasks {
+				if t.ID == m.actionTaskID {
+					m.store.Tasks[i].Description = msg.Content
+					break
+				}
+			}
+			store.SaveStore(m.projectRoot, m.store)
+			m.reload()
+		}
+		m.mode = m.returnMode
+		m.action = actionNone
+		m.actionTaskID = ""
+		return m, flashCmd("Description updated")
+
+	case actionBulkAdd:
+		if msg.Content != "" {
+			return m.spawnBulkAdd(msg.Content)
+		}
+		m.mode = model.ModeList
+		m.action = actionNone
+		return m, flashCmd("No content to process")
+	}
+
+	m.mode = m.returnMode
+	m.action = actionNone
+	return m, nil
+}
+
 func (m Model) handleDelete() (tea.Model, tea.Cmd) {
 	if t := m.selectedTask(); t != nil {
 		m.confirmMsg = fmt.Sprintf("Delete \"%s\"?", t.Title)
@@ -1837,11 +1944,7 @@ func (m Model) executeRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 		systemPrompt = a.SystemPrompt + "\n\n---\n\n" + systemPrompt
 	}
 	if t := m.selectedTask(); t != nil && len(t.Skills) > 0 {
-		for _, name := range t.Skills {
-			if s := m.skillByName(name); s != nil && s.SystemPrompt != "" {
-				systemPrompt = systemPrompt + "\n\n---\n\n## Skill: " + s.Name + "\n\n" + s.SystemPrompt
-			}
-		}
+		systemPrompt = appendSkillRecommendations(systemPrompt, m.skills, t.Skills)
 	}
 	return m, tea.Batch(
 		claude.SpawnInTerminal(workDir, systemPrompt),
@@ -1913,7 +2016,7 @@ func (m Model) spawnBackgroundRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 	opts.PermissionMode = "bypassPermissions"
 	if isTask {
 		if t := m.selectedTask(); t != nil && len(t.Skills) > 0 {
-			appendSkillPrompts(&opts, m.skills, t.Skills)
+			promptText = appendSkillRecommendations(promptText, m.skills, t.Skills)
 		}
 	}
 	if isProof {
@@ -2015,29 +2118,32 @@ func buildCLIOptsFromAgent(a *agent.Agent) claude.CLIOptions {
 	return opts
 }
 
-func appendSkillPrompts(opts *claude.CLIOptions, skills []skill.Skill, taskSkillNames []string) {
+// appendSkillRecommendations adds a short list of recommended skills (name + description)
+// to the system prompt so Claude knows they're available via the Skill tool without
+// injecting the full skill content upfront.
+func appendSkillRecommendations(systemPrompt string, skills []skill.Skill, taskSkillNames []string) string {
 	if len(taskSkillNames) == 0 {
-		return
+		return systemPrompt
 	}
 	byName := make(map[string]*skill.Skill, len(skills))
 	for i := range skills {
 		byName[skills[i].Name] = &skills[i]
 	}
-	var prompts []string
+	var lines []string
 	for _, name := range taskSkillNames {
-		if s, ok := byName[name]; ok && s.SystemPrompt != "" {
-			prompts = append(prompts, fmt.Sprintf("## Skill: %s\n\n%s", s.Name, s.SystemPrompt))
+		if s, ok := byName[name]; ok {
+			desc := s.Description
+			if desc == "" {
+				desc = "(no description)"
+			}
+			lines = append(lines, fmt.Sprintf("- **%s**: %s", s.Name, desc))
 		}
 	}
-	if len(prompts) == 0 {
-		return
+	if len(lines) == 0 {
+		return systemPrompt
 	}
-	combined := strings.Join(prompts, "\n\n---\n\n")
-	if opts.AppendSystemPrompt != "" {
-		opts.AppendSystemPrompt += "\n\n---\n\n" + combined
-	} else {
-		opts.AppendSystemPrompt = combined
-	}
+	section := "## Recommended Skills\n\nThe following skills are recommended for this task. Use the Skill tool (e.g. `/skill-name`) to load them when needed:\n\n" + strings.Join(lines, "\n")
+	return systemPrompt + "\n\n---\n\n" + section
 }
 
 func (m Model) skillByName(name string) *skill.Skill {
@@ -2389,7 +2495,7 @@ func (m Model) spawnPlanGeneration(task *model.Task, a *agent.Agent) (tea.Model,
 	opts := buildCLIOptsFromAgent(a)
 	opts.PermissionMode = "plan"
 	if task != nil && len(task.Skills) > 0 {
-		appendSkillPrompts(&opts, m.skills, task.Skills)
+		promptText = appendSkillRecommendations(promptText, m.skills, task.Skills)
 	}
 
 	var cmd tea.Cmd
