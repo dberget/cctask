@@ -11,9 +11,8 @@ import (
 
 // ExternalEditorExitMsg is sent when the external editor process exits.
 type ExternalEditorExitMsg struct {
-	Err      error
-	Content  string // read-back content (for temp file round-trips)
-	TempFile string // non-empty if a temp file was used (for cleanup)
+	Err     error
+	Content string // read-back content (for temp file round-trips)
 }
 
 // resolveEditor returns the user's preferred editor command.
@@ -40,14 +39,9 @@ func openFileInEditor(filePath string, tempFile bool) tea.Cmd {
 			content = string(data)
 			os.Remove(filePath)
 		}
-		tf := ""
-		if tempFile {
-			tf = filePath
-		}
 		return ExternalEditorExitMsg{
-			Err:      err,
-			Content:  content,
-			TempFile: tf,
+			Err:     err,
+			Content: content,
 		}
 	})
 }
