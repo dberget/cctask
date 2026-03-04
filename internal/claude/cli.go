@@ -8,12 +8,26 @@ import (
 	"github.com/davidberget/cctask-go/internal/model"
 )
 
+// PlanModeAllowedTools are read/research tools granted to plan-mode background processes
+// so they can fetch web content and search without prompting for permission.
+var PlanModeAllowedTools = []string{
+	"Read", "Glob", "Grep",
+	"WebFetch", "WebSearch",
+	"Agent", "Skill",
+	"Bash(git log:*)", "Bash(git diff:*)", "Bash(git show:*)", "Bash(git status:*)", "Bash(git branch:*)",
+	"Bash(ls:*)", "Bash(find:*)", "Bash(wc:*)", "Bash(file:*)",
+	"Bash(tree:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)",
+	"Bash(which:*)", "Bash(env:*)", "Bash(pwd:*)",
+	"Bash(go doc:*)", "Bash(go list:*)", "Bash(go version:*)",
+}
+
 // CLIOptions configures the Claude CLI subprocess.
 type CLIOptions struct {
 	PermissionMode     string
 	Resume             string
 	Model              string
 	AppendSystemPrompt string
+	AllowedTools       []string
 	DisallowedTools    []string
 }
 
@@ -80,6 +94,9 @@ func buildCLIArgs(opts CLIOptions) []string {
 	}
 	if opts.AppendSystemPrompt != "" {
 		args = append(args, "--append-system-prompt", opts.AppendSystemPrompt)
+	}
+	if len(opts.AllowedTools) > 0 {
+		args = append(args, "--allowed-tools", strings.Join(opts.AllowedTools, ","))
 	}
 	if len(opts.DisallowedTools) > 0 {
 		args = append(args, "--disallowed-tools", strings.Join(opts.DisallowedTools, ","))

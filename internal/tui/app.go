@@ -1615,7 +1615,7 @@ func (m Model) spawnBulkAdd(bulkText string) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, m.processCancels, m.processTimeout(), claude.CLIOptions{PermissionMode: "plan"}, nil)
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, m.processCancels, m.processTimeout(), claude.CLIOptions{PermissionMode: "plan", AllowedTools: claude.PlanModeAllowedTools}, nil)
 	} else {
 		projectRoot := m.projectRoot
 		cmd = func() tea.Msg {
@@ -2361,7 +2361,7 @@ func (m Model) spawnGroupAction(scopeGroupID string, instruction string) (tea.Mo
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, m.processCancels, m.processTimeout(), claude.CLIOptions{PermissionMode: "plan"}, nil)
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, m.processCancels, m.processTimeout(), claude.CLIOptions{PermissionMode: "plan", AllowedTools: claude.PlanModeAllowedTools}, nil)
 	} else {
 		projectRoot := m.projectRoot
 		cmd = func() tea.Msg {
@@ -2494,6 +2494,7 @@ func (m Model) spawnPlanGeneration(task *model.Task, a *agent.Agent) (tea.Model,
 
 	opts := buildCLIOptsFromAgent(a)
 	opts.PermissionMode = "plan"
+	opts.AllowedTools = claude.PlanModeAllowedTools
 	if task != nil && len(task.Skills) > 0 {
 		promptText = appendSkillRecommendations(promptText, m.skills, task.Skills)
 	}
@@ -2549,6 +2550,7 @@ func (m Model) spawnGroupPlanGeneration(group *model.Group, a *agent.Agent) (tea
 	if m.program != nil {
 		opts := buildCLIOptsFromAgent(a)
 		opts.PermissionMode = "plan"
+		opts.AllowedTools = claude.PlanModeAllowedTools
 		inputCh := make(chan string, 1)
 		m.processInputs.Register(procID, inputCh)
 		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, m.processCancels, m.processTimeout(), opts, inputCh)
@@ -2608,7 +2610,7 @@ func (m Model) executeCombinePlans(taskIDs []string, name string) (tea.Model, te
 
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, m.processCancels, m.processTimeout(), claude.CLIOptions{PermissionMode: "plan"}, nil)
+		cmd = claude.SpawnStreamCmd(m.program, m.projectRoot, procID, promptText, m.processCancels, m.processTimeout(), claude.CLIOptions{PermissionMode: "plan", AllowedTools: claude.PlanModeAllowedTools}, nil)
 	} else {
 		projectRoot := m.projectRoot
 		planName := name
@@ -2665,7 +2667,7 @@ func (m Model) executeFollowUp(taskID, question string) (tea.Model, tea.Cmd) {
 	if m.program != nil {
 		inputCh := make(chan string, 1)
 		m.processInputs.Register(procID, inputCh)
-		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, m.processCancels, m.processTimeout(), claude.CLIOptions{PermissionMode: "plan"}, inputCh)
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, m.processCancels, m.processTimeout(), claude.CLIOptions{PermissionMode: "plan", AllowedTools: claude.PlanModeAllowedTools}, inputCh)
 	} else {
 		projectRoot := m.projectRoot
 		hasPlanFile := task.PlanFile != ""
