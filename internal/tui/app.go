@@ -2752,6 +2752,13 @@ func (m Model) handleStreamWaiting(msg claude.StreamWaitingMsg) (tea.Model, tea.
 			Kind: model.EventSystem,
 			Text: "Waiting for your input — press c to respond",
 		})
+
+		// Send macOS notification
+		procName := proc.Label
+		if procName == "" {
+			procName = proc.ID
+		}
+		go sendMacNotification("cctask: Agent waiting", procName+" needs your input")
 		break
 	}
 	m.reload()
