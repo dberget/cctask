@@ -27,3 +27,6 @@ __debug_bin*
 
 # Dist
 dist/
+
+# Worktrees
+.worktrees/
