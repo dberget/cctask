@@ -551,6 +551,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case cmdHelpMsg:
 		return m.handleCommandHelp(msg.command)
+
+	case cmdPluginNewMsg:
+		path, err := server.ScaffoldPlugin(m.projectRoot, msg.name)
+		if err != nil {
+			m.mode = model.ModeList
+			return m, flashCmd("Plugin error: " + err.Error())
+		}
+		m.mode = model.ModeList
+		_ = path
+		return m, flashCmd("Plugin created: " + msg.name)
+
+	case cmdServerToggleMsg:
+		if msg.on {
+			if m.server != nil && m.server.Running() {
+				m.mode = model.ModeList
+				return m, flashCmd("Server already running")
+			}
+			cfg := store.LoadConfig(m.projectRoot)
+			cfg.Server.Enabled = true
+			store.SaveConfig(m.projectRoot, cfg)
+			if m.server == nil {
+				srv := server.New(m.projectRoot, cfg.Server)
+				_ = srv.LoadPlugins()
+				if err := srv.StartBackground(); err != nil {
+					m.mode = model.ModeList
+					return m, flashCmd("Server error: " + err.Error())
+				}
+				m.server = srv
+				m.mode = model.ModeList
+				return m, tea.Batch(flashCmd("Server started"), storeCheckTickCmd())
+			}
+			if err := m.server.StartBackground(); err != nil {
+				m.mode = model.ModeList
+				return m, flashCmd("Server error: " + err.Error())
+			}
+			m.mode = model.ModeList
+			return m, tea.Batch(flashCmd("Server started"), storeCheckTickCmd())
+		} else {
+			cfg := store.LoadConfig(m.projectRoot)
+			cfg.Server.Enabled = false
+			store.SaveConfig(m.projectRoot, cfg)
+			if m.server != nil {
+				m.server.Stop(context.Background())
+			}
+			m.mode = model.ModeList
+			return m, flashCmd("Server stopped")
+		}
 	}
 
 	// Forward non-key messages to the filepicker so it can receive readDirMsg

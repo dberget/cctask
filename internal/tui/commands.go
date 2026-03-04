@@ -17,6 +17,8 @@ type cmdExportMsg struct{ format string }
 type cmdSetMsg struct{ key, value string }
 type cmdCdMsg struct{ group string }
 type cmdHelpMsg struct{ command string }
+type cmdPluginNewMsg struct{ name string }
+type cmdServerToggleMsg struct{ on bool }
 
 // prefixCompleter returns a completer function that filters options by prefix.
 func prefixCompleter(options []string) func(partial string) []string {
@@ -212,6 +214,55 @@ func registerCommands(reg *CommandRegistry, getGroups func() []string) {
 			}
 			group := args[0]
 			return func() tea.Msg { return cmdCdMsg{group: group} }
+		},
+	})
+
+	// plugin new <name>
+	reg.Register(Command{
+		Name:        "plugin",
+		Description: "Manage webhook plugins",
+		Args: []ArgDef{
+			{
+				Name:      "action",
+				Required:  true,
+				Completer: prefixCompleter([]string{"new"}),
+			},
+			{
+				Name:     "name",
+				Required: true,
+			},
+		},
+		Execute: func(args []string) tea.Cmd {
+			if len(args) < 2 || args[0] != "new" {
+				return func() tea.Msg { return FlashMsg{Text: "usage: plugin new <name>"} }
+			}
+			return func() tea.Msg { return cmdPluginNewMsg{name: args[1]} }
+		},
+	})
+
+	// server <on|off>
+	reg.Register(Command{
+		Name:        "server",
+		Description: "Enable or disable the webhook server",
+		Args: []ArgDef{
+			{
+				Name:      "state",
+				Required:  true,
+				Completer: prefixCompleter([]string{"on", "off"}),
+			},
+		},
+		Execute: func(args []string) tea.Cmd {
+			if len(args) == 0 {
+				return func() tea.Msg { return FlashMsg{Text: "usage: server <on|off>"} }
+			}
+			switch args[0] {
+			case "on":
+				return func() tea.Msg { return cmdServerToggleMsg{on: true} }
+			case "off":
+				return func() tea.Msg { return cmdServerToggleMsg{on: false} }
+			default:
+				return func() tea.Msg { return FlashMsg{Text: "usage: server <on|off>"} }
+			}
 		},
 	})
 }

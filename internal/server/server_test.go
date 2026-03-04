@@ -338,6 +338,47 @@ func TestIntegrationCreateAndListTasks(t *testing.T) {
 
 // --- File Locking Test ---
 
+// --- Scaffold Tests ---
+
+func TestScaffoldPlugin(t *testing.T) {
+	root := setupTestProject(t)
+
+	path, err := ScaffoldPlugin(root, "asana")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Check main.go exists and contains plugin name
+	mainGo := filepath.Join(path, "main.go")
+	data, err := os.ReadFile(mainGo)
+	if err != nil {
+		t.Fatalf("main.go not created: %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"asana"`)) {
+		t.Fatal("main.go should contain plugin name 'asana'")
+	}
+
+	// Check go.mod exists
+	goMod := filepath.Join(path, "go.mod")
+	if _, err := os.Stat(goMod); err != nil {
+		t.Fatalf("go.mod not created: %v", err)
+	}
+
+	// Creating same plugin again should fail
+	_, err = ScaffoldPlugin(root, "asana")
+	if err == nil {
+		t.Fatal("expected error for duplicate plugin")
+	}
+}
+
+func TestScaffoldPluginEmptyName(t *testing.T) {
+	root := setupTestProject(t)
+	_, err := ScaffoldPlugin(root, "")
+	if err == nil {
+		t.Fatal("expected error for empty name")
+	}
+}
+
 func TestLockedModifyStore(t *testing.T) {
 	root := setupTestProject(t)
 
