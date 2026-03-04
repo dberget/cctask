@@ -1172,7 +1172,20 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if key.Matches(msg, m.keys.Add) && m.mode == model.ModeList {
 		m.action = actionAddTask
-		m.form = NewForm("New Task", nil, m.width, m.skillNames())
+		groupID := ""
+		if g := m.selectedGroup(); g != nil {
+			groupID = g.ID
+		} else if t := m.selectedTask(); t != nil && t.Group != "" {
+			groupID = t.Group
+		}
+		m.actionScopeGroup = groupID
+		heading := "New Task"
+		if groupID != "" {
+			if g := store.FindGroup(m.store, groupID); g != nil {
+				heading = "New Task • " + g.Name
+			}
+		}
+		m.form = NewForm(heading, nil, m.width, m.skillNames())
 		m.mode = model.ModeTaskForm
 		return m, nil
 	}
@@ -1422,7 +1435,7 @@ func (m Model) handleFormSubmit(data TaskFormData) (tea.Model, tea.Cmd) {
 
 	switch m.action {
 	case actionAddTask:
-		t, _ := store.AddTask(m.projectRoot, data.Title, data.Description, tags, "", data.WorkDir)
+		t, _ := store.AddTask(m.projectRoot, data.Title, data.Description, tags, m.actionScopeGroup, data.WorkDir)
 		if t != nil && len(data.Skills) > 0 {
 			store.UpdateTask(m.projectRoot, t.ID, map[string]interface{}{"skills": data.Skills})
 		}
