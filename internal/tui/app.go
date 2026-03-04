@@ -1814,6 +1814,13 @@ func (m Model) executeRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 	if a != nil && a.SystemPrompt != "" {
 		systemPrompt = a.SystemPrompt + "\n\n---\n\n" + systemPrompt
 	}
+	if t := m.selectedTask(); t != nil && len(t.Skills) > 0 {
+		for _, name := range t.Skills {
+			if s := m.skillByName(name); s != nil && s.SystemPrompt != "" {
+				systemPrompt = systemPrompt + "\n\n---\n\n## Skill: " + s.Name + "\n\n" + s.SystemPrompt
+			}
+		}
+	}
 	return m, tea.Batch(
 		claude.SpawnInTerminal(workDir, systemPrompt),
 		flashCmd("Opening claude in new terminal..."),
@@ -1883,6 +1890,11 @@ func (m Model) spawnBackgroundRun(a *agent.Agent) (tea.Model, tea.Cmd) {
 	promptText += "\n\n" + prompt.McpToolGuidanceRun
 
 	extraOpts := agentSDKOpts(a)
+	if isTask {
+		if t := m.selectedTask(); t != nil && len(t.Skills) > 0 {
+			extraOpts = append(extraOpts, skillSDKOpts(m.skills, t.Skills)...)
+		}
+	}
 	if isProof {
 		extraOpts = append(extraOpts, claudecode.WithModel("sonnet"))
 	}
@@ -1978,6 +1990,36 @@ func agentSDKOpts(a *agent.Agent) []claudecode.Option {
 		opts = append(opts, claudecode.WithModel(a.Model))
 	}
 	return opts
+}
+
+func skillSDKOpts(skills []skill.Skill, taskSkillNames []string) []claudecode.Option {
+	if len(taskSkillNames) == 0 {
+		return nil
+	}
+	byName := make(map[string]*skill.Skill, len(skills))
+	for i := range skills {
+		byName[skills[i].Name] = &skills[i]
+	}
+	var prompts []string
+	for _, name := range taskSkillNames {
+		if s, ok := byName[name]; ok && s.SystemPrompt != "" {
+			prompts = append(prompts, fmt.Sprintf("## Skill: %s\n\n%s", s.Name, s.SystemPrompt))
+		}
+	}
+	if len(prompts) == 0 {
+		return nil
+	}
+	combined := strings.Join(prompts, "\n\n---\n\n")
+	return []claudecode.Option{claudecode.WithAppendSystemPrompt(combined)}
+}
+
+func (m Model) skillByName(name string) *skill.Skill {
+	for i := range m.skills {
+		if m.skills[i].Name == name {
+			return &m.skills[i]
+		}
+	}
+	return nil
 }
 
 func (m Model) handleCombine() (tea.Model, tea.Cmd) {
@@ -2317,9 +2359,14 @@ func (m Model) spawnPlanGeneration(task *model.Task, a *agent.Agent) (tea.Model,
 	workDir := store.ResolveWorkDir(m.projectRoot, m.store, task)
 	promptText := prompt.BuildPlanGenerationPrompt(m.projectRoot, task)
 
+	extraOpts := agentSDKOpts(a)
+	if task != nil && len(task.Skills) > 0 {
+		extraOpts = append(extraOpts, skillSDKOpts(m.skills, task.Skills)...)
+	}
+
 	var cmd tea.Cmd
 	if m.program != nil {
-		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout(), agentSDKOpts(a)...)
+		cmd = claude.SpawnStreamCmd(m.program, workDir, procID, promptText, "plan", m.processCancels, m.toolBridge, m.processTimeout(), extraOpts...)
 	} else {
 		projectRoot := m.projectRoot
 		taskID := task.ID
