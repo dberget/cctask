@@ -252,6 +252,55 @@ func TestLoadEnabledPlugins(t *testing.T) {
 	}
 }
 
+func TestLoadSkills_PluginCache(t *testing.T) {
+	// Set up a fake home with plugin cache structure:
+	// cache/<vendor>/<plugin>/<version>/skills/<skill>/SKILL.md
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+
+	// Create plugin cache with vendor/plugin/version structure
+	skillDir := filepath.Join(home, ".claude", "plugins", "cache",
+		"my-vendor", "my-plugin", "1.0.0", "skills", "test-plugin-skill")
+	os.MkdirAll(skillDir, 0o755)
+	os.WriteFile(filepath.Join(skillDir, "SKILL.md"),
+		[]byte("---\nname: test-plugin-skill\ndescription: From plugin\n---\nPlugin instructions"), 0o644)
+
+	// Create a disabled plugin too
+	disabledDir := filepath.Join(home, ".claude", "plugins", "cache",
+		"my-vendor", "disabled-plugin", "1.0.0", "skills", "disabled-skill")
+	os.MkdirAll(disabledDir, 0o755)
+	os.WriteFile(filepath.Join(disabledDir, "SKILL.md"),
+		[]byte("---\nname: disabled-skill\n---\nShould not appear"), 0o644)
+
+	// Create settings with enabledPlugins (pluginName@vendorName format)
+	settingsDir := filepath.Join(home, ".claude")
+	os.WriteFile(filepath.Join(settingsDir, "settings.json"),
+		[]byte(`{"enabledPlugins":{"my-plugin@my-vendor":true,"disabled-plugin@my-vendor":false}}`), 0o644)
+
+	// Override home dir by using the package's loadEnabledPlugins directly
+	// Since LoadSkills uses os.UserHomeDir we test the plugin scanning logic via
+	// a modified LoadSkills that uses our temp home. We can't override UserHomeDir,
+	// so instead test the underlying scan logic.
+	enabled := loadEnabledPlugins(home)
+	if !enabled["my-plugin@my-vendor"] {
+		t.Error("my-plugin@my-vendor should be enabled")
+	}
+	if enabled["disabled-plugin@my-vendor"] {
+		t.Error("disabled-plugin@my-vendor should NOT be enabled")
+	}
+
+	// Verify scanSkillDir finds the plugin skill
+	pluginSkillsDir := filepath.Join(home, ".claude", "plugins", "cache",
+		"my-vendor", "my-plugin", "1.0.0", "skills")
+	found := scanSkillDir(pluginSkillsDir)
+	if len(found) != 1 {
+		t.Fatalf("expected 1 skill, got %d", len(found))
+	}
+	if found[0].Name != "test-plugin-skill" {
+		t.Errorf("name = %q, want %q", found[0].Name, "test-plugin-skill")
+	}
+}
+
 func TestLoadEnabledPlugins_MissingFile(t *testing.T) {
 	home := t.TempDir()
 	enabled := loadEnabledPlugins(home)

@@ -19,7 +19,7 @@ type Skill struct {
 // LoadSkills scans for SKILL.md files in three locations (highest priority first):
 // 1. <projectRoot>/.claude/skills/*/SKILL.md (project-level)
 // 2. ~/.claude/skills/*/SKILL.md (user-level)
-// 3. ~/.claude/plugins/cache/*/VERSION/skills/*/SKILL.md (enabled plugins only)
+// 3. ~/.claude/plugins/cache/<vendor>/<plugin>/<version>/skills/*/SKILL.md (enabled plugins only)
 // De-duplicates by name (project > user > plugin). Sorted alphabetically.
 func LoadSkills(projectRoot string) []Skill {
 	seen := map[string]bool{}
@@ -44,29 +44,46 @@ func LoadSkills(projectRoot string) []Skill {
 		}
 
 		// Plugin-level (enabled plugins only)
+		// Cache structure: cache/<vendor>/<plugin>/<version>/skills/*/SKILL.md
+		// enabledPlugins keys: "pluginName@vendorName"
 		enabled := loadEnabledPlugins(home)
 		pluginCacheDir := filepath.Join(home, ".claude", "plugins", "cache")
-		pluginDirs, err := os.ReadDir(pluginCacheDir)
+		vendorDirs, err := os.ReadDir(pluginCacheDir)
 		if err == nil {
-			for _, pd := range pluginDirs {
-				if !pd.IsDir() || !enabled[pd.Name()] {
+			for _, vd := range vendorDirs {
+				if !vd.IsDir() {
 					continue
 				}
-				// Scan version subdirectories
-				versionDir := filepath.Join(pluginCacheDir, pd.Name())
-				versionEntries, err := os.ReadDir(versionDir)
+				vendorName := vd.Name()
+				vendorPath := filepath.Join(pluginCacheDir, vendorName)
+				pluginDirs, err := os.ReadDir(vendorPath)
 				if err != nil {
 					continue
 				}
-				for _, ve := range versionEntries {
-					if !ve.IsDir() {
+				for _, pd := range pluginDirs {
+					if !pd.IsDir() {
 						continue
 					}
-					skillsDir := filepath.Join(versionDir, ve.Name(), "skills")
-					for _, s := range scanSkillDir(skillsDir) {
-						if !seen[s.Name] {
-							seen[s.Name] = true
-							skills = append(skills, s)
+					pluginKey := pd.Name() + "@" + vendorName
+					if !enabled[pluginKey] {
+						continue
+					}
+					// Scan version subdirectories
+					pluginPath := filepath.Join(vendorPath, pd.Name())
+					versionEntries, err := os.ReadDir(pluginPath)
+					if err != nil {
+						continue
+					}
+					for _, ve := range versionEntries {
+						if !ve.IsDir() {
+							continue
+						}
+						skillsDir := filepath.Join(pluginPath, ve.Name(), "skills")
+						for _, s := range scanSkillDir(skillsDir) {
+							if !seen[s.Name] {
+								seen[s.Name] = true
+								skills = append(skills, s)
+							}
 						}
 					}
 				}
