@@ -34,6 +34,7 @@ const (
 	ModeFormDirPicker
 	ModeBulkAdd
 	ModeSkillPicker
+	ModeCommandBar
 )
 
 func (m ViewMode) String() string {
@@ -100,6 +101,8 @@ func (m ViewMode) String() string {
 		return "bulk-add"
 	case ModeSkillPicker:
 		return "skill-picker"
+	case ModeCommandBar:
+		return "command-bar"
 	default:
 		return "unknown"
 	}
