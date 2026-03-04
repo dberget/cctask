@@ -69,25 +69,7 @@ func (cb CommandBarModel) Update(msg tea.KeyMsg) (CommandBarModel, tea.Cmd) {
 
 	case msg.Type == tea.KeyEnter:
 		if cb.showSuggestions && len(cb.suggestions) > 0 {
-			// Accept the current suggestion, replacing only the last token
-			accepted := cb.suggestions[cb.suggestionIdx]
-			input := string(cb.buffer)
-			parts := strings.Fields(input)
-			if len(parts) <= 1 && !strings.HasSuffix(input, " ") {
-				// Replacing the command name itself
-				cb.buffer = []rune(accepted + " ")
-			} else if strings.HasSuffix(input, " ") {
-				// Appending a new argument
-				cb.buffer = []rune(input + accepted + " ")
-			} else {
-				// Replacing the last partial token
-				parts[len(parts)-1] = accepted
-				cb.buffer = []rune(strings.Join(parts, " ") + " ")
-			}
-			cb.cursor = len(cb.buffer)
-			cb.showSuggestions = false
-			cb.suggestions = nil
-			cb = cb.updateSuggestions()
+			cb = cb.acceptSuggestion()
 			return cb, nil
 		}
 		trimmed := strings.TrimSpace(string(cb.buffer))
@@ -100,15 +82,17 @@ func (cb CommandBarModel) Update(msg tea.KeyMsg) (CommandBarModel, tea.Cmd) {
 		return cb, func() tea.Msg { return CommandSubmitMsg{Input: input} }
 
 	case msg.Type == tea.KeyTab:
-		if len(cb.suggestions) > 0 {
-			cb.showSuggestions = true
-			cb.suggestionIdx = (cb.suggestionIdx + 1) % len(cb.suggestions)
+		if cb.showSuggestions && len(cb.suggestions) > 0 {
+			// Accept current suggestion
+			cb = cb.acceptSuggestion()
+		} else {
+			// Trigger suggestions
+			cb = cb.updateSuggestions()
 		}
 		return cb, nil
 
 	case msg.Type == tea.KeyShiftTab:
-		if len(cb.suggestions) > 0 {
-			cb.showSuggestions = true
+		if cb.showSuggestions && len(cb.suggestions) > 0 {
 			cb.suggestionIdx--
 			if cb.suggestionIdx < 0 {
 				cb.suggestionIdx = len(cb.suggestions) - 1
@@ -243,6 +227,29 @@ func (cb CommandBarModel) updateSuggestions() CommandBarModel {
 		cb.showSuggestions = false
 		cb.suggestionIdx = 0
 	}
+	return cb
+}
+
+// acceptSuggestion replaces the current token with the selected suggestion.
+func (cb CommandBarModel) acceptSuggestion() CommandBarModel {
+	if len(cb.suggestions) == 0 {
+		return cb
+	}
+	accepted := cb.suggestions[cb.suggestionIdx]
+	input := string(cb.buffer)
+	parts := strings.Fields(input)
+	if len(parts) <= 1 && !strings.HasSuffix(input, " ") {
+		cb.buffer = []rune(accepted + " ")
+	} else if strings.HasSuffix(input, " ") {
+		cb.buffer = []rune(input + accepted + " ")
+	} else {
+		parts[len(parts)-1] = accepted
+		cb.buffer = []rune(strings.Join(parts, " ") + " ")
+	}
+	cb.cursor = len(cb.buffer)
+	cb.showSuggestions = false
+	cb.suggestions = nil
+	cb = cb.updateSuggestions()
 	return cb
 }
 
