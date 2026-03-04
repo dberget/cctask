@@ -2733,8 +2733,25 @@ func (m Model) handleStreamWaiting(msg claude.StreamWaitingMsg) (tea.Model, tea.
 
 		// Run completion action on first turn (e.g., save plan)
 		if proc.CompletionAction != model.CompletionNone {
+			action := proc.CompletionAction
 			m.runCompletionAction(proc, msg.FinalText)
 			proc.CompletionAction = model.CompletionNone
+
+			// Auto-close plan processes after saving — no follow-up needed
+			if action == model.CompletionSavePlan || action == model.CompletionSaveGroupPlan {
+				m.processInputs.Close(proc.ID)
+				proc.IsInteractive = false
+				proc.Status = model.ProcessDone
+				proc.Events = append(proc.Events, model.StreamEvent{
+					Kind: model.EventSystem,
+					Text: "Plan saved — closing process",
+				})
+				delete(m.runningLabels, proc.Label)
+				m.reload()
+				return m, tea.Tick(5*time.Second, func(t time.Time) tea.Msg {
+					return ProcessAutoRemoveMsg{ID: msg.ProcessID}
+				})
+			}
 		}
 
 		// If there's a queued message, auto-send it via the live channel
@@ -2789,6 +2806,11 @@ func (m Model) handleStreamDone(msg claude.StreamDoneMsg) (tea.Model, tea.Cmd) {
 					Kind: model.EventSystem,
 					Text: "Interrupted — press c to resume with guidance",
 				})
+				procName := proc.Label
+				if procName == "" {
+					procName = proc.ID
+				}
+				go sendMacNotification("cctask: Agent interrupted", procName+" needs your input")
 				break
 			}
 			proc.Status = model.ProcessError
@@ -2831,6 +2853,12 @@ func (m Model) handleStreamDone(msg claude.StreamDoneMsg) (tea.Model, tea.Cmd) {
 		// Set status: interactive processes wait for follow-up, others are done
 		if proc.IsInteractive {
 			proc.Status = model.ProcessWaiting
+			// Send macOS notification
+			procName := proc.Label
+			if procName == "" {
+				procName = proc.ID
+			}
+			go sendMacNotification("cctask: Agent waiting", procName+" needs your input")
 		} else {
 			proc.Status = model.ProcessDone
 		}

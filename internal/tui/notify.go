@@ -5,14 +5,21 @@ import (
 	"runtime"
 )
 
-// sendMacNotification sends a macOS notification via osascript.
-// Silently does nothing on non-macOS platforms or if osascript fails.
+// sendMacNotification sends a macOS notification.
+// Prefers terminal-notifier if available, falls back to osascript.
+// Silently does nothing on non-macOS platforms or if the command fails.
 func sendMacNotification(title, message string) {
 	if runtime.GOOS != "darwin" {
 		return
 	}
-	script := `display notification "` + escapeAppleScript(message) + `" with title "` + escapeAppleScript(title) + `"`
-	exec.Command("osascript", "-e", script).Run() //nolint:errcheck
+	// Prefer terminal-notifier (works regardless of terminal app)
+	if path, err := exec.LookPath("terminal-notifier"); err == nil {
+		exec.Command(path, "-title", title, "-message", message, "-sound", "default").Run() //nolint:errcheck
+		return
+	}
+	// Fallback to osascript
+	script := `display notification "` + escapeAppleScript(message) + `" with title "` + escapeAppleScript(title) + `" sound name "default"`
+	exec.Command("/usr/bin/osascript", "-e", script).Run() //nolint:errcheck
 }
 
 func escapeAppleScript(s string) string {
