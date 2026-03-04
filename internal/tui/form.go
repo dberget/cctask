@@ -142,10 +142,19 @@ func (m FormModel) Data() TaskFormData {
 type FormSkillPickerMsg struct{}
 
 func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
-	// Dismiss autocomplete on Escape before checking global Escape
-	if msg.Type == tea.KeyEscape && m.acActive {
-		m.acActive = false
-		return m, nil
+	// Dismiss autocomplete on Escape/Tab before global key handlers
+	if m.acActive {
+		if msg.Type == tea.KeyEscape {
+			m.acActive = false
+			return m, nil
+		}
+		if msg.Type == tea.KeyTab {
+			if len(m.acItems) > 0 && m.acIndex < len(m.acItems) {
+				m.insertAutocomplete(m.acItems[m.acIndex])
+			}
+			m.acActive = false
+			return m, nil
+		}
 	}
 
 	// Global keys
@@ -159,10 +168,12 @@ func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
 		}
 		return m, nil
 	case msg.Type == tea.KeyTab:
+		m.acActive = false
 		m.Active = formField((int(m.Active) + 1) % int(fieldCount))
 		m.focusActive()
 		return m, nil
 	case msg.Type == tea.KeyShiftTab:
+		m.acActive = false
 		m.Active = formField((int(m.Active) - 1 + int(fieldCount)) % int(fieldCount))
 		m.focusActive()
 		return m, nil
@@ -187,12 +198,9 @@ func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
 		m.title, cmd = m.title.Update(msg)
 	case fieldDescription:
 		if m.acActive {
-			// Handle autocomplete keys
+			// Handle autocomplete keys (Escape and Tab handled in guard above)
 			switch {
-			case msg.Type == tea.KeyEscape:
-				m.acActive = false
-				return m, nil
-			case msg.Type == tea.KeyEnter || msg.Type == tea.KeyTab:
+			case msg.Type == tea.KeyEnter:
 				if len(m.acItems) > 0 && m.acIndex < len(m.acItems) {
 					m.insertAutocomplete(m.acItems[m.acIndex])
 				}
@@ -397,10 +405,21 @@ func (m FormModel) View() string {
 				indent := strings.Repeat(" ", 16)
 				lines = append(lines, indent+styleGray.Render("Skills:"))
 				maxShow := 8
-				if len(m.acItems) < maxShow {
-					maxShow = len(m.acItems)
+				// Compute scroll window that keeps acIndex visible
+				start := 0
+				if len(m.acItems) > maxShow {
+					if m.acIndex >= maxShow {
+						start = m.acIndex - maxShow + 1
+					}
+					if start+maxShow > len(m.acItems) {
+						start = len(m.acItems) - maxShow
+					}
 				}
-				for idx := 0; idx < maxShow; idx++ {
+				end := start + maxShow
+				if end > len(m.acItems) {
+					end = len(m.acItems)
+				}
+				for idx := start; idx < end; idx++ {
 					prefix := "  "
 					style := lipgloss.NewStyle().Foreground(colorWhite)
 					if idx == m.acIndex {
@@ -409,8 +428,8 @@ func (m FormModel) View() string {
 					}
 					lines = append(lines, indent+style.Render(prefix+"/"+m.acItems[idx]))
 				}
-				if len(m.acItems) > maxShow {
-					lines = append(lines, indent+styleGray.Render(fmt.Sprintf("  ... %d more", len(m.acItems)-maxShow)))
+				if end < len(m.acItems) {
+					lines = append(lines, indent+styleGray.Render(fmt.Sprintf("  ... %d more", len(m.acItems)-end)))
 				}
 			}
 		case fieldTags:
