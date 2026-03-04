@@ -217,6 +217,12 @@ func (cb CommandBarModel) updateSuggestions() CommandBarModel {
 		return cb
 	}
 	input := string(cb.buffer)
+	// Don't show suggestions on empty input — wait for user to type something
+	if strings.TrimSpace(input) == "" {
+		cb.suggestions = nil
+		cb.showSuggestions = false
+		return cb
+	}
 	cb.suggestions = cb.registry.Complete(input)
 	if len(cb.suggestions) > 0 {
 		cb.showSuggestions = true
@@ -262,8 +268,26 @@ func (cb CommandBarModel) SuggestionsView(width int) string {
 		return ""
 	}
 
+	// Show a window of up to 5 suggestions around the selected index
+	maxVisible := 5
+	total := len(cb.suggestions)
+	start := 0
+	end := total
+	if total > maxVisible {
+		start = cb.suggestionIdx - maxVisible/2
+		if start < 0 {
+			start = 0
+		}
+		end = start + maxVisible
+		if end > total {
+			end = total
+			start = end - maxVisible
+		}
+	}
+
 	var lines []string
-	for i, s := range cb.suggestions {
+	for i := start; i < end; i++ {
+		s := cb.suggestions[i]
 		if i == cb.suggestionIdx {
 			lines = append(lines, styleCyanBold.Render("  "+s))
 		} else {
