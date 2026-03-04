@@ -229,6 +229,10 @@ func UpdateTask(projectRoot string, id string, updates map[string]interface{}) (
 			if val, ok := v.(string); ok {
 				task.WorkDir = val
 			}
+		case "skills":
+			if val, ok := v.([]string); ok {
+				task.Skills = val
+			}
 		case "mergedInto":
 			if val, ok := v.(string); ok {
 				task.MergedInto = val

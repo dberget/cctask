@@ -38,6 +38,7 @@ type Task struct {
 	Tags        []string   `json:"tags"`
 	Group       string     `json:"group,omitempty"`
 	WorkDir     string     `json:"workDir,omitempty"`
+	Skills      []string   `json:"skills,omitempty"`
 	PlanFile    string     `json:"planFile,omitempty"`
 	MergedInto  string     `json:"mergedInto,omitempty"`
 	ProofBefore string     `json:"proofBefore,omitempty"`
@@ -96,7 +97,8 @@ type Config struct {
 	Model          string `json:"model,omitempty"`
 	Budget         int    `json:"budget,omitempty"`
 	Theme          string `json:"theme,omitempty"`
-	TimeoutMinutes int    `json:"timeoutMinutes,omitempty"`
+	TimeoutMinutes     int    `json:"timeoutMinutes,omitempty"`
+	DisableSkillPicker bool   `json:"disableSkillPicker,omitempty"`
 }
 
 const DefaultTimeoutMinutes = 60
