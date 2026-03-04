@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -41,6 +42,12 @@ type FormModel struct {
 	// Skills picker
 	skills          []string // selected skill names
 	availableSkills []string // all available skill names for display
+
+	// Slash-command autocomplete
+	acActive bool     // autocomplete dropdown is showing
+	acQuery  string   // text typed after /
+	acIndex  int      // selected index in filtered list
+	acItems  []string // filtered skill names matching query
 }
 
 func NewForm(heading string, initial *TaskFormData, width int, availableSkills []string) FormModel {
@@ -135,6 +142,12 @@ func (m FormModel) Data() TaskFormData {
 type FormSkillPickerMsg struct{}
 
 func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
+	// Dismiss autocomplete on Escape before checking global Escape
+	if msg.Type == tea.KeyEscape && m.acActive {
+		m.acActive = false
+		return m, nil
+	}
+
 	// Global keys
 	switch {
 	case msg.Type == tea.KeyEscape:
@@ -173,7 +186,44 @@ func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
 	case fieldTitle:
 		m.title, cmd = m.title.Update(msg)
 	case fieldDescription:
+		if m.acActive {
+			// Handle autocomplete keys
+			switch {
+			case msg.Type == tea.KeyEscape:
+				m.acActive = false
+				return m, nil
+			case msg.Type == tea.KeyEnter || msg.Type == tea.KeyTab:
+				if len(m.acItems) > 0 && m.acIndex < len(m.acItems) {
+					m.insertAutocomplete(m.acItems[m.acIndex])
+				}
+				m.acActive = false
+				return m, nil
+			case msg.Type == tea.KeyUp:
+				if m.acIndex > 0 {
+					m.acIndex--
+				}
+				return m, nil
+			case msg.Type == tea.KeyDown:
+				if m.acIndex < len(m.acItems)-1 {
+					m.acIndex++
+				}
+				return m, nil
+			default:
+				// Pass through to textarea, then update filter
+				m.desc, cmd = m.desc.Update(msg)
+				m.updateAutocompleteFilter()
+				if len(m.acItems) == 0 {
+					m.acActive = false
+				}
+				return m, cmd
+			}
+		}
+		// Normal description handling
 		m.desc, cmd = m.desc.Update(msg)
+		// Check if / was just typed
+		if msg.Type == tea.KeyRunes && string(msg.Runes) == "/" {
+			m.tryActivateAutocomplete()
+		}
 	case fieldTags:
 		m.tags, cmd = m.tags.Update(msg)
 	case fieldWorkDir:
@@ -201,6 +251,110 @@ func (m *FormModel) focusActive() {
 	case fieldSkills:
 		// Skills field is display-only; no input widget to focus.
 	}
+}
+
+func (m *FormModel) tryActivateAutocomplete() {
+	if len(m.availableSkills) == 0 {
+		return
+	}
+	val := m.desc.Value()
+	lines := strings.Split(val, "\n")
+	row := m.desc.Line()
+	if row >= len(lines) {
+		return
+	}
+	line := lines[row]
+	col := m.desc.LineInfo().CharOffset
+	if col <= 0 || col > len(line) {
+		return
+	}
+	if line[col-1] != '/' {
+		return
+	}
+	// Only activate if / is at start of line or after whitespace
+	if col == 1 || line[col-2] == ' ' || line[col-2] == '\t' {
+		m.acActive = true
+		m.acQuery = ""
+		m.acIndex = 0
+		m.acItems = make([]string, len(m.availableSkills))
+		copy(m.acItems, m.availableSkills)
+	}
+}
+
+func (m *FormModel) updateAutocompleteFilter() {
+	val := m.desc.Value()
+	lines := strings.Split(val, "\n")
+	row := m.desc.Line()
+	if row >= len(lines) {
+		m.acActive = false
+		return
+	}
+	line := lines[row]
+	col := m.desc.LineInfo().CharOffset
+	if col > len(line) {
+		col = len(line)
+	}
+
+	// Find the / that started this autocomplete
+	slashPos := -1
+	for i := col - 1; i >= 0; i-- {
+		if line[i] == '/' {
+			slashPos = i
+			break
+		}
+		if line[i] == ' ' || line[i] == '\t' {
+			break
+		}
+	}
+	if slashPos == -1 {
+		m.acActive = false
+		return
+	}
+
+	m.acQuery = strings.ToLower(line[slashPos+1 : col])
+	m.acItems = nil
+	for _, name := range m.availableSkills {
+		if strings.Contains(strings.ToLower(name), m.acQuery) {
+			m.acItems = append(m.acItems, name)
+		}
+	}
+	if m.acIndex >= len(m.acItems) {
+		m.acIndex = 0
+	}
+}
+
+func (m *FormModel) insertAutocomplete(skillName string) {
+	val := m.desc.Value()
+	lines := strings.Split(val, "\n")
+	row := m.desc.Line()
+	if row >= len(lines) {
+		return
+	}
+	line := lines[row]
+	col := m.desc.LineInfo().CharOffset
+	if col > len(line) {
+		col = len(line)
+	}
+
+	// Find the / position
+	slashPos := -1
+	for i := col - 1; i >= 0; i-- {
+		if line[i] == '/' {
+			slashPos = i
+			break
+		}
+	}
+	if slashPos == -1 {
+		return
+	}
+
+	// Replace /query with /skillName followed by a space
+	newLine := line[:slashPos] + "/" + skillName + " "
+	if col < len(line) {
+		newLine += line[col:]
+	}
+	lines[row] = newLine
+	m.desc.SetValue(strings.Join(lines, "\n"))
 }
 
 func (m FormModel) View() string {
@@ -236,6 +390,27 @@ func (m FormModel) View() string {
 					lines = append(lines, labelPadded+dl)
 				} else {
 					lines = append(lines, strings.Repeat(" ", 16)+dl)
+				}
+			}
+			// Autocomplete dropdown
+			if m.acActive && m.Active == fieldDescription && len(m.acItems) > 0 {
+				indent := strings.Repeat(" ", 16)
+				lines = append(lines, indent+styleGray.Render("Skills:"))
+				maxShow := 8
+				if len(m.acItems) < maxShow {
+					maxShow = len(m.acItems)
+				}
+				for idx := 0; idx < maxShow; idx++ {
+					prefix := "  "
+					style := lipgloss.NewStyle().Foreground(colorWhite)
+					if idx == m.acIndex {
+						prefix = "▸ "
+						style = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
+					}
+					lines = append(lines, indent+style.Render(prefix+"/"+m.acItems[idx]))
+				}
+				if len(m.acItems) > maxShow {
+					lines = append(lines, indent+styleGray.Render(fmt.Sprintf("  ... %d more", len(m.acItems)-maxShow)))
 				}
 			}
 		case fieldTags:
