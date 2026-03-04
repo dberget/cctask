@@ -215,6 +215,7 @@ func NewModel(projectRoot string) Model {
 	}
 	m.commandBar = NewCommandBar()
 	m.commandBar.registry = reg
+	m.commandBar.history = LoadHistory(projectRoot)
 	m.rebuildList()
 	return m
 }
@@ -456,6 +457,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CommandSubmitMsg:
+		SaveHistory(m.projectRoot, m.commandBar.history)
 		return m.executeCommand(msg.Input)
 
 	case CommandCancelMsg:

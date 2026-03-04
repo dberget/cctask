@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"unicode"
 
@@ -277,4 +279,31 @@ func (cb CommandBarModel) SuggestionsView(width int) string {
 		Render(content)
 
 	return box
+}
+
+// LoadHistory reads command history from .cctask/command_history.
+func LoadHistory(projectRoot string) []string {
+	data, err := os.ReadFile(filepath.Join(projectRoot, ".cctask", "command_history"))
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return nil
+	}
+	if len(lines) > 100 {
+		lines = lines[len(lines)-100:]
+	}
+	return lines
+}
+
+// SaveHistory writes command history to .cctask/command_history.
+func SaveHistory(projectRoot string, history []string) {
+	dir := filepath.Join(projectRoot, ".cctask")
+	os.MkdirAll(dir, 0o755)
+	if len(history) > 100 {
+		history = history[len(history)-100:]
+	}
+	data := strings.Join(history, "\n") + "\n"
+	os.WriteFile(filepath.Join(dir, "command_history"), []byte(data), 0o644)
 }
