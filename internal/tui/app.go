@@ -992,15 +992,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		prevActive := m.form.Active
 		var cmd tea.Cmd
 		m.form, cmd = m.form.Update(msg)
-		// Auto-open dir picker when tabbing into WorkDir field
+		// Refresh workdir suggestions when tabbing into WorkDir field
 		if m.form.Active == fieldWorkDir && prevActive != fieldWorkDir {
-			startDir := m.projectRoot
-			if v := m.form.workDir.Value(); v != "" {
-				startDir = v
-			}
-			m.filePicker = newDirPicker(startDir)
-			m.mode = model.ModeFormDirPicker
-			return m, m.filePicker.Init()
+			m.form.updateWorkDirSuggestions()
 		}
 		return m, cmd
 
@@ -1408,7 +1402,7 @@ func (m Model) handleNavKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				heading = "New Task • " + g.Name
 			}
 		}
-		m.form = NewForm(heading, nil, m.width, m.skillNames())
+		m.form = NewForm(heading, nil, m.width, m.skillNames(), m.projectRoot)
 		m.mode = model.ModeTaskForm
 		return m, nil
 	}
@@ -1926,7 +1920,7 @@ func (m Model) handleEdit() (tea.Model, tea.Cmd) {
 				WorkDir:     t.WorkDir,
 				Skills:      t.Skills,
 			}
-			m.form = NewForm(fmt.Sprintf("Edit Task — %s", t.ID), initial, m.width, m.skillNames())
+			m.form = NewForm(fmt.Sprintf("Edit Task — %s", t.ID), initial, m.width, m.skillNames(), m.projectRoot)
 			m.mode = model.ModeTaskForm
 		}
 		return m, nil
