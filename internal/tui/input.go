@@ -129,19 +129,59 @@ type MultiCheckModel struct {
 	Items    []CheckItem
 	Index    int
 	Selected map[string]bool
+
+	// Filter
+	filter        textinput.Model
+	filtered      []int // indices into Items that match the filter
+	filterApplied bool
 }
 
 func NewMultiCheck(label string, items []CheckItem) MultiCheckModel {
+	fi := textinput.New()
+	fi.Prompt = ""
+	fi.CharLimit = 0
+	fi.TextStyle = lipgloss.NewStyle().Foreground(colorWhite)
+	fi.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorSecondary)
+	fi.CursorStyle = styleCursor
+	fi.Placeholder = "type to filter..."
+	fi.Focus()
+
+	allIndices := make([]int, len(items))
+	for i := range items {
+		allIndices[i] = i
+	}
+
 	return MultiCheckModel{
 		Label:    label,
 		Items:    items,
 		Selected: make(map[string]bool),
+		filter:   fi,
+		filtered: allIndices,
+	}
+}
+
+func (m *MultiCheckModel) applyFilter() {
+	query := strings.ToLower(m.filter.Value())
+	m.filtered = nil
+	for i, item := range m.Items {
+		if query == "" || strings.Contains(strings.ToLower(item.Label), query) {
+			m.filtered = append(m.filtered, i)
+		}
+	}
+	m.filterApplied = query != ""
+	if m.Index >= len(m.filtered) {
+		m.Index = 0
 	}
 }
 
 func (m MultiCheckModel) Update(msg tea.KeyMsg) (MultiCheckModel, tea.Cmd) {
 	switch {
 	case msg.Type == tea.KeyEscape:
+		if m.filter.Value() != "" {
+			m.filter.SetValue("")
+			m.applyFilter()
+			return m, nil
+		}
 		return m, func() tea.Msg { return MultiCheckCancelMsg{} }
 	case msg.Type == tea.KeyEnter:
 		if len(m.Selected) > 0 {
@@ -151,23 +191,31 @@ func (m MultiCheckModel) Update(msg tea.KeyMsg) (MultiCheckModel, tea.Cmd) {
 			}
 			return m, func() tea.Msg { return MultiCheckSubmitMsg{Selected: selected} }
 		}
-	case msg.Type == tea.KeyUp || (msg.Type == tea.KeyRunes && string(msg.Runes) == "k"):
+	case msg.Type == tea.KeyUp:
 		if m.Index > 0 {
 			m.Index--
 		}
-	case msg.Type == tea.KeyDown || (msg.Type == tea.KeyRunes && string(msg.Runes) == "j"):
-		if m.Index < len(m.Items)-1 {
+	case msg.Type == tea.KeyDown:
+		if m.Index < len(m.filtered)-1 {
 			m.Index++
 		}
 	case msg.Type == tea.KeySpace:
-		item := m.Items[m.Index]
-		if !item.Disabled {
-			if m.Selected[item.Value] {
-				delete(m.Selected, item.Value)
-			} else {
-				m.Selected[item.Value] = true
+		if len(m.filtered) > 0 && m.Index < len(m.filtered) {
+			item := m.Items[m.filtered[m.Index]]
+			if !item.Disabled {
+				if m.Selected[item.Value] {
+					delete(m.Selected, item.Value)
+				} else {
+					m.Selected[item.Value] = true
+				}
 			}
 		}
+	default:
+		// Pass to filter text input
+		var cmd tea.Cmd
+		m.filter, cmd = m.filter.Update(msg)
+		m.applyFilter()
+		return m, cmd
 	}
 	return m, nil
 }
@@ -175,10 +223,22 @@ func (m MultiCheckModel) Update(msg tea.KeyMsg) (MultiCheckModel, tea.Cmd) {
 func (m MultiCheckModel) View() string {
 	var lines []string
 	lines = append(lines, styleCyanBold.Render(m.Label))
-	lines = append(lines, styleGray.Render(fmt.Sprintf("Space: toggle  Enter: confirm (%d selected)  Esc: cancel", len(m.Selected))))
+	lines = append(lines, styleGray.Render("Space: toggle  Enter: confirm  Esc: clear filter/cancel"))
+	lines = append(lines, "")
 
-	for i, item := range m.Items {
-		isFocused := i == m.Index
+	// Filter input
+	filterLabel := lipgloss.NewStyle().Foreground(colorSecondary).Render("Filter: ")
+	lines = append(lines, filterLabel+m.filter.View())
+	lines = append(lines, "")
+
+	selectedCount := len(m.Selected)
+	if selectedCount > 0 {
+		lines = append(lines, styleGray.Render(fmt.Sprintf("  %d selected", selectedCount)))
+	}
+
+	for fi, itemIdx := range m.filtered {
+		item := m.Items[itemIdx]
+		isFocused := fi == m.Index
 		isChecked := m.Selected[item.Value]
 
 		color := colorWhite
@@ -202,6 +262,11 @@ func (m MultiCheckModel) View() string {
 		}
 		lines = append(lines, lipgloss.NewStyle().Foreground(color).Render(indicator+check+item.Label+suffix))
 	}
+
+	if len(m.filtered) == 0 && m.filterApplied {
+		lines = append(lines, styleGray.Render("  no matches"))
+	}
+
 	return strings.Join(lines, "\n")
 }
 

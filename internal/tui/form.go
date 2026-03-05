@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -48,9 +50,15 @@ type FormModel struct {
 	acQuery  string   // text typed after /
 	acIndex  int      // selected index in filtered list
 	acItems  []string // filtered skill names matching query
+
+	// WorkDir directory suggestions
+	projectRoot string   // root for resolving relative paths
+	wdSuggestions []string // filtered directory suggestions
+	wdIndex       int      // selected suggestion index
+	wdActive      bool     // whether suggestions dropdown is showing
 }
 
-func NewForm(heading string, initial *TaskFormData, width int, availableSkills []string) FormModel {
+func NewForm(heading string, initial *TaskFormData, width int, availableSkills []string, projectRoot string) FormModel {
 	// Title field
 	ti := textinput.New()
 	ti.Prompt = ""
@@ -102,6 +110,7 @@ func NewForm(heading string, initial *TaskFormData, width int, availableSkills [
 		tags:            tg,
 		workDir:         wd,
 		availableSkills: availableSkills,
+		projectRoot:     projectRoot,
 	}
 
 	if initial != nil {
@@ -157,6 +166,12 @@ func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
 		}
 	}
 
+	// Dismiss workdir suggestions on Escape before global keys
+	if m.wdActive && msg.Type == tea.KeyEscape {
+		m.wdActive = false
+		return m, nil
+	}
+
 	// Global keys
 	switch {
 	case msg.Type == tea.KeyEscape:
@@ -169,11 +184,13 @@ func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
 		return m, nil
 	case msg.Type == tea.KeyTab:
 		m.acActive = false
+		m.wdActive = false
 		m.Active = formField((int(m.Active) + 1) % int(fieldCount))
 		m.focusActive()
 		return m, nil
 	case msg.Type == tea.KeyShiftTab:
 		m.acActive = false
+		m.wdActive = false
 		m.Active = formField((int(m.Active) - 1 + int(fieldCount)) % int(fieldCount))
 		m.focusActive()
 		return m, nil
@@ -181,6 +198,16 @@ func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
 
 	// Enter on single-line fields advances to next field / opens skill picker
 	if msg.Type == tea.KeyEnter && m.Active != fieldDescription {
+		// WorkDir with active suggestions: select the suggestion instead of advancing
+		if m.Active == fieldWorkDir && m.wdActive && len(m.wdSuggestions) > 0 {
+			if m.wdIndex < len(m.wdSuggestions) {
+				m.workDir.SetValue(m.wdSuggestions[m.wdIndex])
+				m.workDir.CursorEnd()
+				m.wdActive = false
+				m.updateWorkDirSuggestions()
+			}
+			return m, nil
+		}
 		if m.Active == fieldSkills {
 			// Open the skill picker overlay
 			return m, func() tea.Msg { return FormSkillPickerMsg{} }
@@ -235,7 +262,34 @@ func (m FormModel) Update(msg tea.KeyMsg) (FormModel, tea.Cmd) {
 	case fieldTags:
 		m.tags, cmd = m.tags.Update(msg)
 	case fieldWorkDir:
+		if m.wdActive {
+			switch {
+			case msg.Type == tea.KeyUp:
+				if m.wdIndex > 0 {
+					m.wdIndex--
+				}
+				return m, nil
+			case msg.Type == tea.KeyDown:
+				if m.wdIndex < len(m.wdSuggestions)-1 {
+					m.wdIndex++
+				}
+				return m, nil
+			case msg.Type == tea.KeyEnter:
+				if len(m.wdSuggestions) > 0 && m.wdIndex < len(m.wdSuggestions) {
+					m.workDir.SetValue(m.wdSuggestions[m.wdIndex])
+					m.workDir.CursorEnd()
+					m.wdActive = false
+					m.updateWorkDirSuggestions()
+				}
+				return m, nil
+			default:
+				m.workDir, cmd = m.workDir.Update(msg)
+				m.updateWorkDirSuggestions()
+				return m, cmd
+			}
+		}
 		m.workDir, cmd = m.workDir.Update(msg)
+		m.updateWorkDirSuggestions()
 	case fieldSkills:
 		// Skills field is not editable; input handled via Enter -> picker.
 	}
@@ -259,6 +313,60 @@ func (m *FormModel) focusActive() {
 	case fieldSkills:
 		// Skills field is display-only; no input widget to focus.
 	}
+}
+
+func (m *FormModel) updateWorkDirSuggestions() {
+	val := m.workDir.Value()
+	m.wdSuggestions = nil
+	m.wdIndex = 0
+
+	// Resolve the base directory to list
+	var baseDir, prefix string
+	if val == "" {
+		baseDir = m.projectRoot
+		prefix = ""
+	} else {
+		// Make absolute
+		absVal := val
+		if !filepath.IsAbs(absVal) {
+			absVal = filepath.Join(m.projectRoot, absVal)
+		}
+		// Check if val ends with separator — list that dir; otherwise list parent and filter
+		if strings.HasSuffix(val, string(os.PathSeparator)) {
+			baseDir = absVal
+			prefix = ""
+		} else {
+			baseDir = filepath.Dir(absVal)
+			prefix = strings.ToLower(filepath.Base(absVal))
+		}
+	}
+
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		m.wdActive = false
+		return
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if prefix != "" && !strings.Contains(strings.ToLower(name), prefix) {
+			continue
+		}
+		// Build the suggestion path relative to project root if possible
+		fullPath := filepath.Join(baseDir, name)
+		relPath, err := filepath.Rel(m.projectRoot, fullPath)
+		if err != nil {
+			relPath = fullPath
+		}
+		m.wdSuggestions = append(m.wdSuggestions, relPath)
+	}
+	m.wdActive = len(m.wdSuggestions) > 0
 }
 
 func (m *FormModel) tryActivateAutocomplete() {
@@ -368,7 +476,7 @@ func (m *FormModel) insertAutocomplete(skillName string) {
 func (m FormModel) View() string {
 	var lines []string
 	lines = append(lines, styleCyanBold.Render(m.Heading))
-	lines = append(lines, styleGray.Render("Tab: next field  Enter: next/newline  Ctrl+S: save  Ctrl+B: browse dir  Esc: cancel"))
+	lines = append(lines, styleGray.Render("Tab: next field  Enter: next/select  Ctrl+S: save  Ctrl+B: browse dir  Esc: cancel"))
 	lines = append(lines, "")
 
 	labels := [fieldCount]string{"Title", "Description", "Tags", "WorkDir", "Skills"}
@@ -436,6 +544,36 @@ func (m FormModel) View() string {
 			lines = append(lines, labelPadded+m.tags.View())
 		case fieldWorkDir:
 			lines = append(lines, labelPadded+m.workDir.View())
+			if m.wdActive && m.Active == fieldWorkDir && len(m.wdSuggestions) > 0 {
+				indent := strings.Repeat(" ", 16)
+				maxShow := 8
+				start := 0
+				if len(m.wdSuggestions) > maxShow {
+					if m.wdIndex >= maxShow {
+						start = m.wdIndex - maxShow + 1
+					}
+					if start+maxShow > len(m.wdSuggestions) {
+						start = len(m.wdSuggestions) - maxShow
+					}
+				}
+				end := start + maxShow
+				if end > len(m.wdSuggestions) {
+					end = len(m.wdSuggestions)
+				}
+				for idx := start; idx < end; idx++ {
+					pfix := "  "
+					style := lipgloss.NewStyle().Foreground(colorWhite)
+					if idx == m.wdIndex {
+						pfix = "▸ "
+						style = lipgloss.NewStyle().Foreground(colorPrimary).Bold(true)
+					}
+					lines = append(lines, indent+style.Render(pfix+m.wdSuggestions[idx]+"/"))
+				}
+				if end < len(m.wdSuggestions) {
+					lines = append(lines, indent+styleGray.Render(fmt.Sprintf("  ... %d more", len(m.wdSuggestions)-end)))
+				}
+				lines = append(lines, indent+styleGray.Render("↑/↓: navigate  Enter: select"))
+			}
 		case fieldSkills:
 			skillsDisplay := "(none - press Enter to select)"
 			if len(m.skills) > 0 {
